@@ -1713,6 +1713,76 @@ moved to, and that is what it checks now.
 
 ---
 
+## What a turn actually costs
+
+Measured against the fake host, so the numbers are structural — call counts and
+prompt sizes, not wall-clock, since the fake answers instantly.
+
+**The extension's own work is not the cost.** One turn, end to end:
+
+| chat length | interceptor (blocking) | extension CPU | chat re-reads |
+|---|---|---|---|
+| 50 messages | 24ms | 24ms | 0 |
+| 500 messages | 5ms | 8ms | 0 |
+| 2,000 messages | 7ms | 11ms | 0 |
+
+Flat, because the chat mirror is attached on switch rather than re-read per
+turn, and the lorebook cache serves repeat passes with no host calls at all.
+The post-turn pipeline is fire-and-forget, so it never blocks the host either.
+
+**The cost is one extra model call per turn, and what it carries:**
+
+| configuration | prompt | approx tokens |
+|---|---|---|
+| lore off (the default) | 25,141 chars | ~6,300 |
+| lore on, `loreScope: 'card'` | 41,174 chars | ~10,300 |
+| lore on, `loreScope: 'all'` | 121,214 chars | ~30,300 |
+
+With lore off, **96% of that is the static module instructions** — 24,242
+characters of them, and all ten modules are on by default (upstream's default,
+not the port's). It is byte-identical turn to turn, which was worth confirming
+rather than assuming: a single varying character near the start would make it
+uncacheable.
+
+`buildLorebookContext()` puts the lore block *before* the story inside the user
+message, which keeps the stable half at the front where a prefix cache can
+reach it. It also dumps every entry of every filtered book with no cap, which is
+why `'all'` costs what it does.
+
+### The setting that was never exposed
+
+`stateTrackerRunEvery` has always been in the engine and always been honoured —
+`onGenerationEnded` skips the State Model pass on non-matching ticks. The port
+put `routerRunEvery` and `mapUpdaterRunEvery` in the settings schema and missed
+this one, so it sat at its default of 1 and could not be changed.
+
+It is the largest latency control the extension has, because the tracker is the
+one model call that happens on **every** turn:
+
+```
+stateTrackerRunEvery=1:  8 passes over 8 turns
+stateTrackerRunEvery=2:  4 passes over 8 turns
+```
+
+Now in the schema. The trade is real and stated in its help text: the memo lags
+a turn behind.
+
+### Prompt caching belongs to the connection, not to the extension
+
+Lumiverse applies prompt caching in `prepareRawCall()` →
+`applyPromptCaching()`, driven by **`connection.metadata`** — and extension
+generations go through that same path. So enabling caching on the connection
+profile the tracker uses covers the static prompt above; nothing in the
+extension needs to ask for it.
+
+The extension deliberately does **not** force `prompt_caching: true`. The host
+gates it per provider for a reason: `services/caching/nanogpt.ts` warns that
+sending it on non-Claude routes "biases provider selection toward cache-capable
+upstreams and bypasses subscription coverage". Overriding a user's connection
+configuration from an extension would be the wrong call.
+
+---
+
 ## Where the port stands
 
 **107 of 133 upstream files, 55,387 lines**, across 33 test suites.

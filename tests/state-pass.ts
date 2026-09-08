@@ -117,6 +117,44 @@ check('no runtime action was called before initialisation',
   !state.logs.some(l => /used before initialization/i.test(l.message)),
   state.logs.find(l => /used before initialization/i.test(l.message))?.message ?? '')
 
+console.log('\n── how often the pass runs ──')
+/*
+ * The tracker is the one model call that happens on every single turn, so how
+ * often it runs is the largest latency control the extension has. The engine
+ * has always throttled it on `stateTrackerRunEvery` — `onGenerationEnded`
+ * skips the pass on non-matching ticks — but the port never put the setting in
+ * the schema, so it sat at its default of 1 and could not be changed.
+ */
+const extractorCalls = (): number => (state.generations as unknown[]).filter(entry =>
+  /State Extractor/.test(String((entry as any)?.messages?.[0]?.content ?? ''))).length
+
+const turnsToRun = async (every: number, turns: number): Promise<number> => {
+  settings.stateTrackerRunEvery = every
+  state.generations.length = 0
+  for (let turn = 0; turn < turns; turn++) {
+    await emitHostEvent(state, 'GENERATION_ENDED', { chatId: 'chat-1' })
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  return extractorCalls()
+}
+
+const everyTurn = await turnsToRun(1, 8)
+check('the default runs a pass on every turn', everyTurn === 8, `${everyTurn} of 8`)
+const everyOther = await turnsToRun(2, 8)
+check('raising it halves the model calls', everyOther === 4, `${everyOther} of 8`)
+check('which is the point: fewer passes, fewer waits',
+  everyOther < everyTurn, `${everyOther} vs ${everyTurn}`)
+settings.stateTrackerRunEvery = 1
+
+// The control has to be reachable, not just honoured — this is what was missing.
+const { SETTINGS_SCHEMA } = await import('../src/shared/settings-schema')
+const exposed = SETTINGS_SCHEMA.some(area =>
+  (area.fields ?? []).some(field => field.key === 'stateTrackerRunEvery')
+  || (area.groups ?? []).some(group =>
+    group.fields.some(field => field.key === 'stateTrackerRunEvery')))
+check('and it is offered in the settings', exposed,
+  'the engine honoured it all along; nothing exposed it')
+
 // Settings are saved debounced; give the timer room to fire.
 await new Promise(resolve => setTimeout(resolve, 1200))
 

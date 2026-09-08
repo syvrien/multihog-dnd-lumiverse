@@ -219,6 +219,19 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
     description: 'The pass that reads each turn and updates the campaign memo.',
     fields: [
       {
+        // The engine has always honoured this — `onGenerationEnded` skips the
+        // State Model pass on non-matching ticks — but the port never surfaced
+        // it, so it was pinned at 1 and every turn paid for a pass. It is the
+        // largest latency control the extension has: the tracker is the one
+        // model call that happens on every single turn.
+        key: 'stateTrackerRunEvery', kind: 'number', fallback: 1, min: 1, max: 20, step: 1,
+        label: 'Run the tracker every N turns',
+        help: '1 runs it after every turn, which is the most accurate and the '
+          + 'slowest — it adds a model call to every message. 2 halves that, at '
+          + 'the cost of the memo lagging a turn behind. Raise it if turns feel '
+          + 'slow; leave it at 1 if the memo must always be current.',
+      },
+      {
         key: 'lookbackSinceLastUser', kind: 'toggle', fallback: true,
         label: 'Read since the last player turn',
         help: 'On: everything since your last message, so a whole turn is covered '
