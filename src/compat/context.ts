@@ -38,16 +38,15 @@ let activeCharacterId: number | null = null
 let characters: Array<Record<string, unknown>> = []
 /** A filter entry that matches no book, meaning "none of them". */
 const NO_SUCH_BOOK = '\u0000__multihog_no_book__'
-let personaName = 'You'
-let characterName = 'Narrator'
+/** What the identity macros fall back to before anything is resolved. */
+const DEFAULT_PERSONA_NAME = 'You'
+const DEFAULT_CHARACTER_NAME = 'Narrator'
+let personaName = DEFAULT_PERSONA_NAME
+let personaDescription = ''
+let characterName = DEFAULT_CHARACTER_NAME
 
 export function setActiveChat(chatId: string | null): void {
   activeChatId = chatId
-}
-
-export function setActiveCharacter(characterId: number | null, name?: string): void {
-  activeCharacterId = characterId
-  if (name) characterName = name
 }
 
 /**
@@ -66,21 +65,39 @@ export function setActiveCharacter(characterId: number | null, name?: string): v
  * So the mapping keeps that shape exactly: a one-element array holding the
  * active card, with the index at 0. The host's real id stays on the card as
  * `id` for anything that wants it.
+ *
+ * Everything this touches is *replaced* on every call, never merely filled in.
+ * An earlier cut returned early on the card-less paths, which left the previous
+ * chat's name in `{{char}}` and — worse — the previous campaign's books in
+ * `settings.lorebookFilter`, so a freeform chat was fed the last campaign's
+ * lore. A chat switch has to be able to clear as well as set.
  */
 export async function loadActiveCharacter(chatId: string | null): Promise<void> {
   activeCharacterId = null
   characters = []
+  characterName = DEFAULT_CHARACTER_NAME
+  try {
+    await resolveActiveCard(chatId)
+  } catch (error) {
+    // A campaign without a card is ordinary; so is a revoked permission.
+    spindle.log.warn(`[DnD] could not resolve the chat's character: ${(error as Error).message}`)
+  }
+  // Unconditional: the filter belongs to the chat that just loaded, whether or
+  // not that chat turned out to have a card.
+  await applyLoreScope()
+}
+
+async function resolveActiveCard(chatId: string | null): Promise<void> {
   if (!chatId || !spindle.permissions.has('characters')) return
 
-  try {
-    const chat = await spindle.chats.get(chatId, userScope())
-    const characterId = (chat as { character_id?: string } | null)?.character_id
-    if (!characterId) return
+  const chat = await spindle.chats.get(chatId, userScope())
+  const characterId = (chat as { character_id?: string } | null)?.character_id
+  if (!characterId) return
 
-    const card = await spindle.characters.get(characterId, userScope())
-    if (!card) return
+  const card = await spindle.characters.get(characterId, userScope())
+  if (!card) return
 
-    characters = [{
+  characters = [{
       // What the engine actually reads.
       name: card.name ?? '',
       description: card.description ?? '',
@@ -96,22 +113,39 @@ export async function loadActiveCharacter(chatId: string | null): Promise<void> 
       // for the narrator itself; this is so the tracker can be pointed at the
       // same ones instead of at every book in the account.
       world_book_ids: Array.isArray(card.world_book_ids) ? [...card.world_book_ids] : [],
-    }]
-    activeCharacterId = 0
-    if (card.name) characterName = card.name
-    await applyLoreScope()
+  }]
+  activeCharacterId = 0
+  if (card.name) characterName = card.name
+}
+
+/**
+ * Resolve who `{{user}}` and `{{persona}}` are.
+ *
+ * Neither was ever resolved: `personaName` sat at its `'You'` default because
+ * nothing called the setter, and `{{persona}}` had no branch at all in
+ * `substituteParams`, so it came back as the literal string `{{persona}}`.
+ * `portraits.js` guards its persona block with `if (persona.trim())` — a
+ * literal passes that — so three image-prompt builders were pushing
+ * `User Persona:\n{{persona}}` into the prompt as if it were a description.
+ *
+ * The host resolves the active persona from the user's `activePersonaId`
+ * setting and falls back to the default one; both are read here so the macros
+ * mean what the rest of Lumiverse means by them.
+ */
+export async function loadActivePersona(): Promise<void> {
+  personaName = DEFAULT_PERSONA_NAME
+  personaDescription = ''
+  if (!spindle.permissions.has('personas')) return
+
+  try {
+    const persona = await spindle.personas.getActive?.(userScope())
+      ?? await spindle.personas.getDefault?.(userScope())
+    if (!persona) return
+    if (persona.name) personaName = persona.name
+    personaDescription = String(persona.description ?? '')
   } catch (error) {
-    // A campaign without a card is ordinary; so is a revoked permission.
-    spindle.log.warn(`[DnD] could not resolve the chat's character: ${(error as Error).message}`)
+    spindle.log.warn(`[DnD] could not resolve the active persona: ${(error as Error).message}`)
   }
-}
-
-export function setCharacters(list: Array<Record<string, unknown>>): void {
-  characters = list
-}
-
-export function setPersonaName(name: string): void {
-  personaName = name || 'You'
 }
 
 /**
@@ -153,10 +187,12 @@ export async function applyLoreScope(): Promise<void> {
 
   const ids: string[] = (characters[0]?.world_book_ids as string[]) ?? []
   if (!ids.length) {
-    // A card with nothing attached is not the same as no card. An empty
-    // filter means "every book", which is the opposite of what this scope
-    // asked for, so name one that cannot exist rather than widen silently.
-    settings.lorebookFilter = characters.length ? [NO_SUCH_BOOK] : []
+    // Nothing to scope by — because the card names no books, or because there
+    // is no card. Either way an empty filter would mean "every book", which is
+    // the opposite of what this scope asked for, so name one that cannot exist
+    // rather than widen silently. Someone who wants lore in a card-less chat
+    // has two other scopes to pick from.
+    settings.lorebookFilter = [NO_SUCH_BOOK]
     return
   }
 
@@ -216,13 +252,18 @@ function saveChatDebounced(): void {
 
 /**
  * ST's macro substitution. Lumiverse resolves the full macro set server-side
- * during prompt assembly, so the port only handles the two identity macros the
+ * during prompt assembly, so the port only handles the identity macros the
  * engine expands itself before that point.
+ *
+ * `{{persona}}` is here because leaving it unhandled is not neutral: the callers
+ * in `portraits.js` test the *result* for content, and an unreplaced macro is
+ * content. An empty replacement is what makes those blocks drop out.
  */
 function substituteParams(text: string): string {
   return String(text ?? '')
     .replace(/\{\{user\}\}/gi, personaName)
     .replace(/\{\{char\}\}/gi, characterName)
+    .replace(/\{\{persona\}\}/gi, personaDescription)
 }
 
 /**

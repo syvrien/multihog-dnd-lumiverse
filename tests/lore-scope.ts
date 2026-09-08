@@ -137,6 +137,35 @@ check('no lore is sent', none.length === 0, `${none.length} chars`)
 check('and it did not silently widen to everything',
   !/Muriel/.test(none), JSON.stringify(settings.lorebookFilter))
 
+console.log('\n── a card-less chat does not inherit the last one’s books ──')
+// `loadActiveCharacter` returned early when a chat had no card, and that early
+// return skipped the filter entirely. So the filter stayed pointed at whatever
+// the previous campaign brought, and a freeform chat was fed that campaign's
+// lore — a leak between two stories that share nothing.
+state.characterCards.set('card-1', {
+  id: 'card-1', name: 'Khelt', description: 'A drowned city.',
+  scenario: '', first_mes: '', personality: '', world_book_ids: ['book-khelt'],
+})
+state.messages.set('chat-2', [{
+  id: 'm2', chat_id: 'chat-2', index_in_chat: 0, is_user: true, role: 'user',
+  name: 'You', content: 'x', send_date: 0, swipe_id: 0, swipes: ['x'],
+  swipe_dates: [0], extra: {}, parent_message_id: null, branch_id: null, created_at: 0,
+}] as never)
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await wait()
+check('the card’s own chat is scoped to the card’s book',
+  (settings.lorebookFilter ?? []).join() === 'Khelt Lore',
+  JSON.stringify(settings.lorebookFilter))
+// chat-2 was never given a card.
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await wait()
+const inherited = await memo.buildLorebookContext()
+check('the previous campaign’s lore does not follow it across',
+  !/third bridge/.test(inherited), `${inherited.length} chars`)
+check('and the filter was re-derived rather than left as it was',
+  (settings.lorebookFilter ?? []).join() !== 'Khelt Lore',
+  JSON.stringify(settings.lorebookFilter))
+
 console.log('\n── the map manifest still works ──')
 // `getWorldInfoNames()` stays async because its lazy rebuild is what catches
 // books created outside `saveWorldInfo`. Making it synchronous for the call

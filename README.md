@@ -77,8 +77,10 @@ must name a user on every user-scoped call — see "Scope: one user at a time" i
 ## Publishing and installing via GitHub
 
 Push this repo to your own GitHub, then in Lumiverse use **Install from
-GitHub** with that URL. Two manifest fields need to be yours before you push —
-see the note at the top of [spindle.json](spindle.json).
+GitHub** with that URL. Set `github` and `homepage` in
+[spindle.json](spindle.json) to that URL before you push: the installer prefers
+the manifest's value over the URL it was given, so leaving them as they are
+registers the wrong repo even when you install from the right one.
 
 `dist/` is gitignored on purpose. Lumiverse's installer runs `bun install`
 against `package.json`, then builds whichever of `dist/backend.js` /

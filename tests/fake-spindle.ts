@@ -52,6 +52,8 @@ export interface FakeState {
   userStorage: Map<string, string>
   /** Personas the user can seed a character from. */
   personas: Array<Record<string, unknown>>
+  /** The host's `activePersonaId` setting; unset means no active persona. */
+  activePersonaId: string | null
   /** Character cards, keyed by id. */
   characterCards: Map<string, Record<string, any>>
   /** Which card each chat is played against. */
@@ -135,6 +137,7 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
         is_default: false, metadata: {}, created_at: 0, updated_at: 0,
       },
     ],
+    activePersonaId: null,
     images: new Map([['img-1', { id: 'img-1', url: '/api/v1/images/img-1' }]]),
     uploads: [],
     imageGenConnections: [],
@@ -549,6 +552,19 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
       async get(personaId: string, userId?: string) {
         requireUser(userId, 'personas.get')
         return state.personas.find(p => p.id === personaId) ?? null
+      },
+      // The host resolves "active" from the user's `activePersonaId` setting
+      // and returns null when it is unset — it does *not* fall back to the
+      // default on its own. Modelled exactly, because a fake that always hands
+      // back a persona would never show what an unset one does.
+      async getActive(userId?: string) {
+        requireUser(userId, 'personas.getActive')
+        if (!state.activePersonaId) return null
+        return state.personas.find(p => p.id === state.activePersonaId) ?? null
+      },
+      async getDefault(userId?: string) {
+        requireUser(userId, 'personas.getDefault')
+        return state.personas.find(p => p.is_default) ?? null
       },
     },
 

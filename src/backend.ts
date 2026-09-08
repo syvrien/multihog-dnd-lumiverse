@@ -18,7 +18,12 @@ import { cancelAllPopups, resolvePopup, setPopupUser } from './compat/popup-brid
 import { invalidateConnectionCache } from './compat/llm'
 import { registeredToolNames, unregisterAllTools } from './compat/tools'
 import { installEngineHooks, removeEngineHooks } from './compat/engine-hooks'
-import { loadActiveCharacter, loadChatMetadata, setActiveChat } from './compat/context'
+import {
+  loadActiveCharacter,
+  loadActivePersona,
+  loadChatMetadata,
+  setActiveChat,
+} from './compat/context'
 import { loadChatState, saveChatStateFor } from './compat/chat-state'
 import { onUserResolved, setActiveUser, userScope } from './compat/user-context'
 import { flushRuntimeActions, installRuntimeActions } from './compat/runtime-actions'
@@ -108,6 +113,8 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
   // Which card this campaign is played against. Rolling a character reads it,
   // as do the portrait prompts — see `loadActiveCharacter`.
   await loadActiveCharacter(chatId)
+  // And who is playing: `{{user}}` and `{{persona}}` resolve from this.
+  await loadActivePersona()
 
   if (switching) {
     const restored = await loadChatState(chatId)

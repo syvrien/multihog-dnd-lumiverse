@@ -143,6 +143,22 @@ check('a level the user asked for still lands',
   /level 7/i.test(withSetup),
   'defusing applies to borrowed text only')
 
+console.log('\n── who {{user}} and {{persona}} are ──')
+// `{{persona}}` had no branch in `substituteParams`, so it came back as itself.
+// `portraits.js` guards its persona block with `if (persona.trim())` — which a
+// literal `{{persona}}` passes — so three image-prompt builders were pushing
+// "User Persona: {{persona}}" into the prompt as though it were a description.
+const withCard = (globalThis as any).SillyTavern.getContext()
+check('{{persona}} resolves to the persona’s description',
+  /kobold/.test(withCard.substituteParams('{{persona}}')),
+  JSON.stringify(withCard.substituteParams('{{persona}}')))
+check('and never survives as a literal',
+  !/\{\{persona\}\}/.test(withCard.substituteParams('{{persona}}')))
+// `setPersonaName` existed and nothing called it, so name1 sat at its default
+// and `router.js` rendered {{user}} as the word "You".
+check('{{user}} is the persona, not the word “You”',
+  withCard.name1 === 'Syg', JSON.stringify(withCard.name1))
+
 console.log('\n── a chat with no card still works ──')
 state.chatCharacter.delete('chat-1')
 await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
@@ -151,6 +167,10 @@ const bare = (globalThis as any).SillyTavern.getContext()
 check('the context is empty rather than broken',
   bare.characterId === null && bare.characters.length === 0,
   `${JSON.stringify(bare.characterId)} / ${bare.characters.length}`)
+// A chat switch has to clear as well as set. This returned early on the
+// card-less path, so {{char}} kept naming the card from the chat before it.
+check('{{char}} goes back to the default rather than keeping the last card',
+  bare.name2 === 'Narrator', JSON.stringify(bare.name2))
 
 settings.currentMemo = ''
 state.generationQueue = [SHEET, BIO]

@@ -1538,6 +1538,58 @@ name, description, scenario and opening scene.
 
 ---
 
+## What a chat switch has to clear
+
+Three bugs, one shape: **`loadActiveCharacter` could set state but not unset
+it.** It reset `characters` and `characterId` up front and then returned early
+on each path where no card resolves — no chat, no `characters` permission, a
+chat with no card, a deleted card. Everything after those returns belonged to
+the chat before.
+
+So switching from a campaign into a freeform chat left:
+
+- **`settings.lorebookFilter` still naming the last campaign's books.** The
+  tracker read one story's lore while summarising another. That is worse than
+  the bug it followed: an empty context is visible, a confidently wrong one is
+  not.
+- **`{{char}}` still naming the last card.** `narrative-hooks.js` reads
+  `ctx.name2` as the active character in two places.
+
+The fix is structural rather than one more branch: the resolve half moved into
+its own function, and the caller now always resets, always re-derives the lore
+scope, and treats a thrown lookup the same as an absent card.
+
+`loreScope: 'card'` with no card at all resolves to the same matches-no-book
+sentinel as a card with no books attached. It used to fall through to "every
+book", which is not what that scope asked for either.
+
+### `{{persona}}` was answering with its own name
+
+`substituteParams` handled `{{user}}` and `{{char}}` and passed everything else
+through — the right default, until a caller tests the *result* for content:
+
+```js
+const persona = ctx.substituteParams?.('{{persona}}') || '';
+if (persona.trim()) contextParts.push(`User Persona:\n${persona.trim()}`);
+```
+
+An unreplaced macro passes `.trim()`. So three prompt builders in
+`portraits.js` were pushing the literal line `User Persona: {{persona}}` into
+image-generation context as though it described the player.
+
+Underneath it, `personaName` had the card's fault exactly: a setter nothing
+called, so `ctx.name1` sat at the string `'You'` and `router.js` rendered
+`{{user}}` as that word. The host has had `personas.getActive()` and
+`personas.getDefault()` all along; both are read on chat change now.
+
+**The fake host hid this too, for the familiar reason** — it offered
+`personas.list`/`get` and neither of the two methods the real host has, so
+nothing could have called them. It now models `getActive()` returning `null`
+when `activePersonaId` is unset rather than helpfully falling back on its own,
+which puts the fallback in the port where it can be read.
+
+---
+
 ## Where the port stands
 
 **107 of 133 upstream files, 55,387 lines**, across 33 test suites.
@@ -1549,7 +1601,20 @@ surface). Those are ~28,600 lines that were never going to come across.
 
 ### Known, not fixed
 
-Nothing outstanding. The three that used to live here are described below.
+**A card with a scenario softens Instant Action's rolled level and class.**
+`character-creator.js` sets `instantActionLevelFallback` from
+`!!instantActionInstructions`, and folding the card's opening scene into that
+string makes it non-empty even when the user typed nothing. The prompt then
+carries the rolled level and class as "fallback — follow the Initial Setup
+instead", where "Initial Setup" now includes text the user did not write.
+
+`defuseLevels()` takes the digits out of the borrowed half, so there is no
+number for the model to follow, and the panel's own summary reads the level off
+the user's text only — the two agree in every case tested. What is left is that
+a strongly-worded scenario could still argue the model into a different class
+than the one rolled, which is arguably the feature working. Separating the two
+inputs properly means changing a generated engine signature, which is not a
+hand-edit this port makes.
 
 ---
 
