@@ -1588,6 +1588,39 @@ nothing could have called them. It now models `getActive()` returning `null`
 when `activePersonaId` is unset rather than helpfully falling back on its own,
 which puts the fallback in the port where it can be read.
 
+### The same rule, for work still in flight
+
+`chat-scope.ts` had established that state at rest belongs to a chat. What it
+did not cover is the gap between *starting* something and *writing* it. Three
+flows spent seconds of model time in that gap and then resolved their target at
+write time, so the result landed wherever the user had moved to:
+
+- **Instant Action** — two model calls, then `addPlayerCardToLorebookAgent()`
+  (which reads `ctx.chatId` itself) and an opening message. Switching chats
+  mid-roll put the character sheet *and* an unasked-for "Begin the adventure"
+  into the other campaign, and reported success, because from the roll's point
+  of view nothing had failed.
+- **Rolling a character by hand** — worse, because the draft waits in a review
+  dialog for as long as the user likes. Approving after a switch ran `writeMemo`
+  against the *active* chat, replacing that campaign's memo with a character
+  belonging to another one. The old memo went to `memoHistory`, so it was
+  recoverable — if you noticed.
+- **Scene art** — the slowest call in the extension, then
+  `customLocationImages` written under whatever chat was open by then.
+
+Each now decides its chat before the first model call. Instant Action abandons
+rather than retargets, because the engine function it calls resolves the chat
+internally and this port does not hand-edit generated code. The roll stamps its
+draft and refuses a commit into a different chat, leaving the draft pending so
+switching back still works. Scene art returns the URL it paid for, and says it
+was not saved.
+
+**Nothing in the fake could produce this.** Its generation calls answer
+instantly, so there was no moment at which a chat switch could be made to
+happen. It now has a `duringGeneration` hook that runs inside a generation
+call — the fake's fourth iteration in this port on the same lesson, which is
+that a fake behaving *better* than the host tests nothing.
+
 ---
 
 ## Where the port stands

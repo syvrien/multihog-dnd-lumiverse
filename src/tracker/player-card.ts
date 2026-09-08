@@ -247,6 +247,16 @@ export interface RollDraft {
   portraitUrl?: string
   /** The persona's own name, which is how the portrait gets keyed on commit. */
   personaName?: string
+  /**
+   * The chat this was rolled for.
+   *
+   * A draft outlives the roll — it waits in the review dialog until someone
+   * approves it — and a chat switch in between went unnoticed. Approving then
+   * wrote the sheet into whichever chat was open by that point, replacing
+   * *that* campaign's memo with a character belonging to another one. Recorded
+   * here so the commit can tell the two apart.
+   */
+  chatId?: string | null
 }
 
 /**
@@ -270,6 +280,9 @@ export async function rollCharacter(
   if (!spindle.permissions.has('generation')) {
     return { ok: false, reason: 'generation permission not granted' }
   }
+  // Taken before the model call, not after: the switch can happen during the
+  // roll as easily as during the review.
+  const rolledForChat = chatMirror.getChatId()
 
   const bits = await engine()
   const settings = bits.getSettings()
@@ -344,6 +357,7 @@ export async function rollCharacter(
     memo,
     portraitUrl: persona ? await personaImageUrl(persona.imageId, userId) : '',
     personaName: persona?.name,
+    chatId: rolledForChat,
   }
 }
 
@@ -355,10 +369,30 @@ export async function rollCharacter(
  * goes into `memoHistory` through the normal commit path.
  */
 export async function commitRoll(
-  draft: { memo: string; name?: string; portraitUrl?: string; personaName?: string },
+  draft: {
+    memo: string
+    name?: string
+    portraitUrl?: string
+    personaName?: string
+    chatId?: string | null
+  },
 ): Promise<{ ok: boolean; changed: boolean; portrait: boolean; reason?: string }> {
   const memo = String(draft?.memo ?? '').trim()
   if (!memo) return { ok: false, changed: false, portrait: false, reason: 'the sheet is empty' }
+
+  // `writeMemo` replaces the active chat's memo and pushes the old one into
+  // history. Approving a sheet rolled for a different chat therefore overwrote
+  // a campaign the character has nothing to do with. The draft is left pending
+  // rather than discarded — switching back and approving again is the fix.
+  const activeChat = chatMirror.getChatId()
+  if (draft.chatId !== undefined && draft.chatId !== activeChat) {
+    return {
+      ok: false,
+      changed: false,
+      portrait: false,
+      reason: 'that character was rolled in a different chat — switch back to approve it',
+    }
+  }
 
   const { writeMemo } = await import('./direct-prompt')
   const written = await writeMemo(memo)

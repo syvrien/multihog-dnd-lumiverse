@@ -32,6 +32,7 @@
  * reads as a hang.
  */
 
+import { chatMirror } from '../compat/chat-mirror'
 import { inheritConnections } from './connections'
 
 const GENRES = ['fantasy', 'realistic', 'scifi', 'horror'] as const
@@ -213,6 +214,19 @@ export function isQuickStartRunning(): boolean {
  * path a CYOA choice takes, so the interceptor, the memo injection and the
  * tracker pass all behave as they would for a typed message.
  */
+/**
+ * Give up rather than write into whichever chat the user moved to.
+ *
+ * Reported as a plain failure with a reason, not a thrown error: nothing went
+ * wrong, and the roll is cheap to repeat in the right chat.
+ */
+function abandoned(chatId: string | null, onStep?: (label: string) => void): QuickStartResult {
+  const reason = 'the chat changed while the character was being rolled — nothing was written'
+  spindle.log.info(`[DnD] Quick Start abandoned: started in ${chatId ?? 'no chat'}`)
+  onStep?.('Cancelled — you switched chats.')
+  return { ok: false, reason }
+}
+
 export async function runQuickStart(
   options: QuickStartOptions,
   sendOpening: (text: string) => Promise<void> | void,
@@ -228,6 +242,20 @@ export async function runQuickStart(
   const genre = GENRES.includes(options.genre as never)
     ? options.genre
     : 'fantasy'
+
+  /*
+   * Which chat this roll belongs to, decided now rather than at write time.
+   *
+   * Two model calls run between here and the first write, and both take long
+   * enough to switch chats in. Nothing downstream re-checks:
+   * `addPlayerCardToLorebookAgent()` reads `ctx.chatId` when it stores, and the
+   * opening turn resolves the target when it sends. So rolling in one campaign
+   * and switching to another put the character sheet *and* an unasked-for
+   * opening message into the second one — and reported success, because from
+   * the roll's point of view nothing failed.
+   */
+  const chatIdAtStart = chatMirror.getChatId()
+  const movedOn = (): boolean => chatMirror.getChatId() !== chatIdAtStart
 
   running = true
   try {
@@ -294,6 +322,8 @@ export async function runQuickStart(
       instantActionInstructions: creationContext,
     })
 
+    if (movedOn()) return abandoned(chatIdAtStart, onStep)
+
     onStep?.('Writing the Player Card…')
     const bio = await bits.generatePersonaBio(
       charName,
@@ -301,6 +331,10 @@ export async function runQuickStart(
       bits.buildInstantActionPromptSection(instructions),
     )
     if (!bio) throw new Error('Persona generation returned empty.')
+
+    // The last gate before anything is written. Everything above this line is
+    // a model call; everything below it lands in a chat.
+    if (movedOn()) return abandoned(chatIdAtStart, onStep)
 
     const stored = await bits.addPlayerCardToLorebookAgent(charName, bio, wordCount)
     if (!stored) throw new Error('Could not add the Player Card — no active chat.')

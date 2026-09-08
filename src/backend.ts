@@ -1149,6 +1149,9 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
           name: draft.name,
           portraitUrl: draft.portraitUrl,
           personaName: draft.personaName,
+          // Which chat it was rolled for — the commit refuses to write into
+          // any other one.
+          chatId: draft.chatId,
         })
         // Only on success. Clearing first meant a failed commit threw the
         // rolled sheet away, and the review modal had already closed — the

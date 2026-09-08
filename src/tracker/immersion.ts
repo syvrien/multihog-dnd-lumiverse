@@ -100,6 +100,11 @@ export async function generateSceneArt(
 
   const bits = await engine()
   const settings = bits.getSettings()
+  // Image generation is the slowest call the extension makes, and the write
+  // below used to resolve its chat *after* it returned — so art drawn for one
+  // campaign was filed under whichever chat the user had moved to.
+  const { chatMirror } = await import('../compat/chat-mirror')
+  const chatIdAtStart = chatMirror.getChatId()
 
   let scene: Record<string, any>
   try {
@@ -133,12 +138,18 @@ export async function generateSceneArt(
   }
   if (!url) return { ok: false, prompt, reason: 'the image model returned nothing' }
 
+  const chatId = chatMirror.getChatId()
+  if (chatId !== chatIdAtStart) {
+    // The image is drawn and paid for, but `customLocationImages` is part of
+    // the active chat's snapshot — writing it now would file this campaign's
+    // art under another one. Handing back the URL keeps the work visible.
+    return { ok: true, url, prompt, reason: 'you switched chats — the art was not saved' }
+  }
+
   // Keyed by the normalised path, which is where the scene renderer looks.
   if (!settings.customLocationImages) settings.customLocationImages = {}
   settings.customLocationImages[bits.normalizeLocationPath(path)] = url
 
-  const { chatMirror } = await import('../compat/chat-mirror')
-  const chatId = chatMirror.getChatId()
   if (chatId) {
     try {
       const persistence = await import('../engine/src/state/chat-persistence.js') as unknown as {

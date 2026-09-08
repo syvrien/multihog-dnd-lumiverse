@@ -39,6 +39,15 @@ export interface FakeState {
    * `generationResponse` once drained.
    */
   generationQueue: string[]
+  /**
+   * Runs inside a generation call, before it returns.
+   *
+   * The fake answers instantly; a real model takes seconds, and a user can do
+   * things in those seconds — switching chats above all. Without a point where
+   * that can be made to happen, no test can reach the code that runs *between*
+   * asking for a character and writing one down.
+   */
+  duringGeneration?: () => void | Promise<void>
   activeChatId: string | null
   granted: Set<string>
   /**
@@ -535,10 +544,12 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
         if (!input?.model) {
           throw new Error('NanoGPT generate failed (400): Missing or invalid required parameter: model.')
         }
+        await state.duringGeneration?.()
         return { content: nextResponse(), finish_reason: 'stop' } as unknown
       },
       async quiet(input: unknown) {
         state.generations.push(input)
+        await state.duringGeneration?.()
         return { content: nextResponse(), finish_reason: 'stop' } as unknown
       },
       async batch() { return [] },
