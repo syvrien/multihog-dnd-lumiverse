@@ -76,11 +76,12 @@ must name a user on every user-scoped call — see "Scope: one user at a time" i
 
 ## Publishing and installing via GitHub
 
-Push this repo to your own GitHub, then in Lumiverse use **Install from
-GitHub** with that URL. Set `github` and `homepage` in
-[spindle.json](spindle.json) to that URL before you push: the installer prefers
-the manifest's value over the URL it was given, so leaving them as they are
-registers the wrong repo even when you install from the right one.
+In Lumiverse, use **Install from GitHub** with this repo's URL.
+
+If you fork it, change `github` and `homepage` in [spindle.json](spindle.json)
+to point at your fork before you push. The installer prefers the manifest's
+value over the URL it was given, so a fork that leaves them alone registers
+this repo rather than itself.
 
 `dist/` is gitignored on purpose. Lumiverse's installer runs `bun install`
 against `package.json`, then builds whichever of `dist/backend.js` /
