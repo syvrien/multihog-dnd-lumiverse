@@ -1897,13 +1897,27 @@ async function boot(): Promise<void> {
       const hooks = await import('./engine/narrative-hooks.js') as {
         onGenerationEnded?: () => Promise<void>
       }
-      if (hooks.onGenerationEnded) {
-        await hooks.onGenerationEnded()
-      } else {
-        // Fall back to the tracker alone rather than doing nothing.
-        spindle.log.warn('[DnD] onGenerationEnded missing; running the tracker pass directly')
-        await runTrackerPass()
-      }
+      /*
+       * The whole post-turn pipeline belongs to the turn that just ended.
+       *
+       * It runs the tracker, the Lorebook Agent, the map updater, the evolution
+       * pass and World Progression — several model calls, and every one of the
+       * writes afterwards asks `ctx.chatId` again at the moment it writes. A
+       * chat switch anywhere in there used to redirect the lot into the chat
+       * the user had moved to. Pinning keeps the results with the turn that
+       * produced them; the passes that must not run at all against a moved-on
+       * chat (the tracker) check the chat mirror themselves and still stop.
+       */
+      const { withChatPinned } = await import('./compat/context')
+      await withChatPinned(async () => {
+        if (hooks.onGenerationEnded) {
+          await hooks.onGenerationEnded()
+        } else {
+          // Fall back to the tracker alone rather than doing nothing.
+          spindle.log.warn('[DnD] onGenerationEnded missing; running the tracker pass directly')
+          await runTrackerPass()
+        }
+      })
       await renderPanel()
     })().catch(error => {
       spindle.log.error(`[DnD] post-generation pipeline failed: ${(error as Error).message}`)

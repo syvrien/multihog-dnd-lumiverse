@@ -1621,6 +1621,41 @@ happen. It now has a `duringGeneration` hook that runs inside a generation
 call — the fake's fourth iteration in this port on the same lesson, which is
 that a fake behaving *better* than the host tests nothing.
 
+### Pinning the chat, rather than guarding every write
+
+The three above are each guarded where they write. That does not scale to the
+map and Campaign Records subsystems, which are generated engine code: they ask
+`ctx.chatId` at the moment they write, from dozens of places, and `router.js`
+names its helper `getLivePrefix()` — reading live is the deliberate design.
+
+It is also correct *in SillyTavern*, where an extension shares a thread with the
+UI and the chat cannot move underneath a call. Here it can, and the Map
+Architect is the worst case: two model calls, then a save. Switching chats in
+between wrote a finished dungeon to `<other chat>_Locations` and returned "Map
+saved" to the narrator — so one campaign went on believing in a map that had
+been filed under another.
+
+Rather than patch generated code, the compat layer holds the answer still.
+`withChatPinned()` fixes `ctx.chatId` for the length of an operation, and three
+callers use it:
+
+- **every tool invocation** (`compat/tools.ts`) — a tool runs mid-generation, so
+  the chat that triggered it is the one active at dispatch; the host sends no
+  chat id with an invocation, and there is nothing else to go on;
+- **the post-turn pipeline** (`GENERATION_ENDED`) — the tracker, the Lorebook
+  Agent, the map updater, the evolution pass and World Progression all belong to
+  the turn that just ended;
+- **the terminal's manual passes** — an instruction is about the chat it was
+  sent from.
+
+Pinning beats refusing here: the work belongs to the chat that asked for it, and
+that chat is still there to receive it. The tracker pass, which genuinely must
+not run against a moved-on chat, keeps its own `chatMirror` check and still
+stops.
+
+**Checked and found clean:** `records.ts` only reads, and `map-edit.ts` writes
+to a book it already resolved by id rather than from the live chat.
+
 ---
 
 ## Where the port stands

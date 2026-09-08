@@ -60,6 +60,19 @@ export async function runTerminal(
   }
   inheritConnections(stateManager.getSettings())
 
+  // Every target below spends model time and then writes somewhere derived
+  // from `ctx.chatId`, read at the moment it writes. An instruction sent here
+  // is about the chat it was sent from, so that is the chat it stays with even
+  // if the user moves on while it runs — see `withChatPinned`.
+  const { withChatPinned } = await import('../compat/context')
+  return withChatPinned(() => dispatch(target, text, lookback))
+}
+
+async function dispatch(
+  target: TerminalTarget,
+  text: string,
+  lookback: number | null,
+): Promise<TerminalResult> {
   try {
     switch (target) {
       case 'tracker': {

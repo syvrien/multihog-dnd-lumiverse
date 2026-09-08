@@ -45,6 +45,45 @@ let personaName = DEFAULT_PERSONA_NAME
 let personaDescription = ''
 let characterName = DEFAULT_CHARACTER_NAME
 
+/**
+ * A chat id held steady for the length of an operation. `undefined` = not held.
+ *
+ * The engine asks `ctx.chatId` whenever it needs to know where to write, and it
+ * asks *at the moment it writes*. `router.js` even names its helper
+ * `getLivePrefix()`. That is correct in SillyTavern, where the extension runs
+ * on the same thread as the UI and a chat cannot change underneath a call.
+ *
+ * Here it can. The Map Architect makes two model calls and saves afterwards, so
+ * a chat switch in between sent a finished dungeon to `<other chat>_Locations`
+ * — and told the narrator "Map saved", leaving one campaign believing in a map
+ * that had been filed under another.
+ *
+ * Pinning is preferable to refusing: the work belongs to the chat that asked
+ * for it, and that chat is still there to receive it.
+ */
+let pinnedChatId: string | null | undefined
+
+/**
+ * Run `fn` with `ctx.chatId` held at whatever is active now.
+ *
+ * Nesting restores the enclosing pin rather than clearing it, so a tool that
+ * calls another tool does not escape the outer one.
+ */
+export async function withChatPinned<T>(fn: () => Promise<T>): Promise<T> {
+  const enclosing = pinnedChatId
+  pinnedChatId = activeChatId
+  try {
+    return await fn()
+  } finally {
+    pinnedChatId = enclosing
+  }
+}
+
+/** What the engine should believe the current chat is. */
+function currentChatId(): string | null {
+  return pinnedChatId !== undefined ? pinnedChatId : activeChatId
+}
+
 export function setActiveChat(chatId: string | null): void {
   activeChatId = chatId
 }
@@ -317,8 +356,8 @@ export interface StContext {
 const context: StContext = {
   // ── chat (56 call sites) ──────────────────────────────────────────────────
   get chat() { return chatMirror.messages },
-  get chatId() { return activeChatId },
-  getCurrentChatId: () => activeChatId,
+  get chatId() { return currentChatId() },
+  getCurrentChatId: () => currentChatId(),
   saveChat,
   saveChatDebounced,
   get chat_metadata() { return chatMetadata },

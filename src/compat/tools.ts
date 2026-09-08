@@ -47,7 +47,18 @@ function ensureDispatcher(): void {
     const tool = invocation?.toolName ? actions.get(invocation.toolName) : undefined
     if (!tool) return ''
     try {
-      const result = await tool.action(invocation.args ?? {})
+      /*
+       * The chat is held still for the length of the call.
+       *
+       * A tool runs mid-generation, so the chat that triggered it is the one
+       * active right now — the host sends no chat id with an invocation, and
+       * there is nothing else to go on. `CreateAreaMap` then spends two model
+       * calls building a map and saves afterwards, reading `ctx.chatId` again
+       * at that point: a switch in between filed the finished map under the
+       * chat the user had moved to, while telling this one it was saved.
+       */
+      const { withChatPinned } = await import('./context')
+      const result = await withChatPinned(async () => tool.action(invocation.args ?? {}))
       // The host coerces null/undefined to an empty string, but a non-string
       // result would be dropped — the dice actions return prose, so anything
       // else is a bug worth surfacing as text rather than silence.

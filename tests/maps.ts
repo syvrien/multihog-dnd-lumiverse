@@ -231,6 +231,61 @@ check('the assets were placed into it',
     + JSON.stringify(mapEntry?.metadata ?? {})),
   'the creature should have landed in the flooded nave')
 
+console.log('\n── the map belongs to the chat that asked for it ──')
+/*
+ * The Architect makes two model calls and saves afterwards, and the save asks
+ * `ctx.chatId` again at that point — `router.js` calls its helper
+ * `getLivePrefix()`, which is right in SillyTavern and wrong here. Switching
+ * chats between the two calls filed a finished dungeon under
+ * `<the other chat>_Locations` and still told the narrator "Map saved", so one
+ * campaign believed in a map that had been written into another.
+ */
+state.messages.set('chat-2', [{
+  id: 'm2', chat_id: 'chat-2', index_in_chat: 0, is_user: true, role: 'user',
+  name: 'You', content: 'A different campaign entirely.', send_date: 0, swipe_id: 0,
+  swipes: ['A different campaign entirely.'], swipe_dates: [0], extra: {},
+  parent_message_id: null, branch_id: null, created_at: 0,
+}] as never)
+// A second site, because the Architect refuses to re-map one it has already
+// done — and a refusal never reaches the model, so the switch would never fire.
+// The `site` field has to match the tool's argument or validation rejects the
+// topology, and a rejected pass writes nothing, which would make the checks
+// below pass for the wrong reason. Both traps were hit while writing this.
+const TOPOLOGY_2 = JSON.stringify({
+  ...JSON.parse(TOPOLOGY) as Record<string, unknown>,
+  site: 'Salt Stair',
+})
+state.generationQueue = [TOPOLOGY_2, ASSETS]
+// Between the topology call and the assets call — where a real switch lands.
+let architectCalls = 0
+state.duringGeneration = async () => {
+  if (++architectCalls !== 1) return
+  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+}
+let switched = ''
+try {
+  switched = await invokeTool(state, 'CreateAreaMap', {
+    site: 'Salt Stair', entrance: 'Iron Gate', kind: 'DUNGEON', scale: 'SMALL',
+    threat: 'LOW', prompt: 'A stair cut down through salt.',
+    brief_description: 'A narrow stair cut through salt.',
+  })
+} catch (error) {
+  switched = 'THREW: ' + (error as Error).message
+}
+state.duringGeneration = undefined
+await settle()
+
+check('the user did end up in the other chat',
+  SillyTavern.getContext().chatId === 'chat-2',
+  String(SillyTavern.getContext().chatId))
+// Asserted positively: "no chat-2 book" is also true of a pass that failed.
+check('the map still saved, and into the chat that asked',
+  /Map saved to chat_1_Locations/.test(switched),
+  switched.split('\n')[1] ?? switched.slice(0, 110))
+check('no lorebook exists for the chat switched to',
+  ![...state.books.values()].some(b => /chat.?2/i.test(String(b.name))),
+  [...state.books.values()].map(b => b.name).join(', '))
+
 const errors = state.logs.filter(entry => entry.level === 'error')
 console.log('\n── errors ──')
 if (!errors.length) console.log('  (none)')
