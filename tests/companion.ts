@@ -140,6 +140,23 @@ check('the first chat\'s conversation came back',
 check('and the other chat\'s did not come with it',
   !back.some(entry => /Different campaign/.test(entry.content)))
 
+// The return trip, which is where this broke. Leaving a chat runs
+// `flushAdventureCompanionForChat`, and the engine is explicit that it "must
+// run before the live companion is swapped on chat switch" — but the port ran
+// it *after* `loadChatState()` had already swapped the arriving chat in. So
+// leaving chat 2 wrote chat 1's conversation into chat 2's slot and chat 2's
+// own was lost. Going one way and back only exercises the half that worked.
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await wait()
+const second = await readCompanionHistory()
+check('the second chat kept its own conversation',
+  second.some(entry => /Different campaign/.test(entry.content)),
+  second.map(entry => entry.content.slice(0, 24)).join(' | ') || '(empty)')
+check('and did not inherit the first chat\'s',
+  !second.some(entry => /light a torch/i.test(entry.content)))
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await wait()
+
 console.log('\n── clearing ──')
 await clearCompanionHistory()
 check('gone', (await readCompanionHistory()).length === 0)

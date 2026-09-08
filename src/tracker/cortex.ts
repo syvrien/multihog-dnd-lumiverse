@@ -108,16 +108,31 @@ function blockBody(memo: string, tag: string): string {
  * Stat lines are skipped: a block lists `Kestrel` and then `HP: 27/34` beneath
  * it, and "HP" starting with a capital was once enough to file a hit point
  * total as a member of the party.
+ *
+ * The two blocks this reads are not written the same way, which is the trap.
+ * `[CHARACTER]` opens `Syg (Resonator)` — parenthetical last, so stripping a
+ * trailing `(...)` is enough. `[PARTY]` opens `Elara (Ranger): 26/45 HP`, per
+ * the shipped prompt's own example, and there the parenthetical is no longer
+ * last: the strip missed and the whole line became the name. Every party member
+ * reached the Cortex as "Elara (Ranger): 26/45 HP" — and since `upsert` is
+ * keyed by name and the HP moves every turn, each sync filed a *new* entity
+ * rather than updating one.
  */
 function namesFrom(body: string): Array<{ name: string; detail: string }> {
   const found: Array<{ name: string; detail: string }> = []
   for (const raw of body.split('\n')) {
     const line = raw.trim()
     if (!line) continue
-    // `Label: value` is a stat, not a person.
+    // `Label: value` is a stat, not a person. (`Elara (Ranger): …` does not
+    // match this — the bracket ends the label — so roster lines survive it.)
     if (/^[A-Za-z][\w /]*:\s/.test(line)) continue
     const [namePart, ...rest] = line.split(/\s+[—–-]\s+/)
-    const name = namePart.replace(/^[-*•]\s*/, '').replace(/\s*\([^)]*\)\s*$/, '').trim()
+    const name = namePart
+      .replace(/^[-*•]\s*/, '')
+      // The roster's stat tail goes first, so the parenthetical is last again.
+      .replace(/:\s.*$/, '')
+      .replace(/\s*\([^)]*\)\s*$/, '')
+      .trim()
     if (!name || name.length > 60) continue
     found.push({ name, detail: rest.join(' — ').trim() })
   }

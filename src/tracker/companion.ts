@@ -238,15 +238,39 @@ export async function installCompanionHooks(
   setChatInputSink(sendChat)
 }
 
-/** Move the companion's conversation with the chat. */
-export async function companionChatChanged(
-  oldChatId: string | null,
-  newChatId: string | null,
-): Promise<void> {
+/*
+ * Moving the conversation with the chat is two steps, and they belong at two
+ * different moments.
+ *
+ * `onChatChanged(old, new)` does both at once — flush the departing chat, then
+ * load the arriving one — and the port called it after `loadChatState()`. But
+ * `loadChatState()` has already swapped the live companion session to the
+ * arriving chat by then, so the flush wrote the *arriving* chat's conversation
+ * into the *departing* chat's slot. Leave a campaign, come back, and you were
+ * reading the other one's conversation; your own was gone.
+ *
+ * The engine says so itself, on `flushAdventureCompanionForChat`: "Must run
+ * before the live companion is swapped on chat switch." Splitting the pair is
+ * what lets each half honour that.
+ */
+
+/** Save the departing chat's conversation. Must run while it is still live. */
+export async function flushCompanionFor(chatId: string | null): Promise<void> {
+  if (!chatId) return
   const bits = await engine()
   try {
-    bits.onChatChanged(oldChatId, newChatId)
+    bits.flushForChat(chatId)
   } catch (error) {
-    spindle.log.warn(`[DnD] companion chat switch failed: ${(error as Error).message}`)
+    spindle.log.warn(`[DnD] companion flush failed: ${(error as Error).message}`)
+  }
+}
+
+/** Load the arriving chat's conversation, after its state has been restored. */
+export async function loadCompanionFor(chatId: string | null): Promise<void> {
+  const bits = await engine()
+  try {
+    bits.loadForChat(chatId)
+  } catch (error) {
+    spindle.log.warn(`[DnD] companion load failed: ${(error as Error).message}`)
   }
 }

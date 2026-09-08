@@ -139,20 +139,30 @@ state.duringGeneration = async () => {
   state.duringGeneration = undefined
   await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
 }
-const outcome = await runQuickStart({ genre: 'fantasy' }, async () => {
-  openingSentTo = (await import('../src/compat/chat-mirror')).chatMirror.getChatId()
+const outcome = await runQuickStart({ genre: 'fantasy' }, async (_text, intoChatId) => {
+  openingSentTo = intoChatId
 }, () => {})
 await new Promise(resolve => setTimeout(resolve, 400))
-check('the roll is abandoned rather than misdelivered',
-  !outcome.ok, outcome.reason ?? 'it reported success')
+/*
+ * The requirement is not "the roll fails" — where the switch lands decides
+ * that, and a roll that completed before the user moved is a good roll. It is
+ * that nothing reaches the chat they moved *to*. Asserting failure instead was
+ * asserting the timing, and it broke the moment an unrelated change added an
+ * await earlier in the switch.
+ */
+check('the roll either finished or stood down, but did not misdeliver',
+  outcome.ok || /chat changed/.test(outcome.reason ?? ''),
+  outcome.reason ?? 'completed')
 // Both writes happen after the two model calls, so both used to land in
 // whichever chat was open by then.
 check('no player card was stored in the chat switched to',
   !settings.chatStates?.['chat-2']?.playerCharacter,
   JSON.stringify(settings.chatStates?.['chat-2']?.playerCharacter ?? null))
-check('and no opening message was sent to it',
-  openingSentTo === null && (state.messages.get('chat-2')?.length ?? 0) === before2,
-  String(openingSentTo))
+check('the opening was addressed to the chat that rolled, not the new one',
+  openingSentTo === null || openingSentTo === 'chat-1', String(openingSentTo))
+check('and no message reached the chat switched to',
+  (state.messages.get('chat-2')?.length ?? 0) === before2,
+  `${state.messages.get('chat-2')?.length ?? 0} vs ${before2}`)
 
 const errors = state.logs.filter(entry => entry.level === 'error')
 console.log('\n── errors ──')

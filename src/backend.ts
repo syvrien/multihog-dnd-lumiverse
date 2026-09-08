@@ -100,6 +100,11 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
   if (switching) {
     const { stopStatePass } = await import('./tracker/state-pass')
     stopStatePass()
+    // The companion's conversation goes first, while the departing chat is
+    // still the live one — the engine requires that order and the port used to
+    // break it. See `flushCompanionFor`.
+    const { flushCompanionFor } = await import('./tracker/companion')
+    await flushCompanionFor(previous)
     // `settings.currentMemo` is a projection of one chat's state. Flush the
     // outgoing chat before the incoming one overwrites it, or an uncommitted
     // edit is lost and the projection is left belonging to the wrong chat.
@@ -121,12 +126,12 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     if (!restored && chatId) {
       spindle.log.info(`[DnD] chat ${chatId} has no tracker snapshot yet`)
     }
-    // The companion's conversation belongs to the chat too. `loadChatState`
-    // restores it when a snapshot exists; this covers the switch itself, so a
-    // chat with no snapshot gets an empty transcript rather than the previous
-    // campaign's.
-    const { companionChatChanged } = await import('./tracker/companion')
-    await companionChatChanged(previous, chatId)
+    // The arriving chat's own conversation, now that its state is restored.
+    // This is only the load half: the departing chat was flushed above, before
+    // `loadChatState` swapped the live session out from under it. A chat with
+    // no snapshot gets an empty transcript rather than the previous campaign's.
+    const { loadCompanionFor } = await import('./tracker/companion')
+    await loadCompanionFor(chatId)
     await syncCompanion()
 
     // Offer a restore if the backup looks fuller than what loaded. The engine
@@ -1223,8 +1228,9 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
             },
             // The opening turn goes through the same path a CYOA choice takes,
             // so it is an ordinary user message with the full pipeline behind
-            // it rather than a special case.
-            text => sendChoice(text, userId),
+            // it rather than a special case. The chat it belongs to travels
+            // with it — see `sendChoice`.
+            (text, intoChatId) => sendChoice(text, userId, intoChatId),
             label => send({ type: 'quickstart:step', label }, userId),
           )
           send({
@@ -1604,11 +1610,25 @@ async function handleDisplayGroups(
  * same pipeline the chat input uses — so the interceptor, the state memo and
  * the tracker pass all behave exactly as they would for a typed turn.
  */
-async function sendChoice(text: string, userId?: string): Promise<void> {
+async function sendChoice(
+  text: string,
+  userId?: string,
+  intoChatId?: string | null,
+): Promise<void> {
   const chatId = chatMirror.getChatId()
   const content = String(text ?? '').trim()
   if (!chatId || !content) {
     spindle.log.warn('[DnD] ignoring CYOA choice with no active chat or empty text')
+    return
+  }
+  // A caller that knows which chat its message belongs to says so, and the
+  // comparison lives here — in the same synchronous block as the append —
+  // rather than at the call site, where the chat can still move in the await
+  // between checking and sending.
+  if (intoChatId !== undefined && intoChatId !== chatId) {
+    spindle.log.info(
+      `[DnD] not sending into ${chatId}: that turn belongs to ${intoChatId ?? 'no chat'}`,
+    )
     return
   }
   if (!spindle.permissions.has('chat_mutation')) {

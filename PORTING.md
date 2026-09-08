@@ -1656,6 +1656,61 @@ stops.
 **Checked and found clean:** `records.ts` only reads, and `map-edit.ts` writes
 to a book it already resolved by id rather than from the live chat.
 
+### The companion's conversation went to the wrong chat
+
+`flushAdventureCompanionForChat` carries its contract in its own docstring:
+*"Must run before the live companion is swapped on chat switch."* The port ran
+it after — `onChatChanged(old, new)` does flush-then-load in one call, and
+`syncActiveChat` called it *after* `loadChatState()` had already swapped the
+arriving chat's state in. So the flush snapshotted the **arriving** chat's
+conversation and wrote it into the **departing** chat's slot.
+
+Leave a campaign and come back and you were reading the other one's
+conversation; your own was gone. The existing test went chat 1 → chat 2 →
+chat 1, which is the half that works. It is the return trip to chat 2 that
+loses.
+
+The pair is split now — `flushCompanionFor` before `saveChatStateFor`, while the
+departing chat is still live, and `loadCompanionFor` after the arriving chat's
+state is restored.
+
+**The in-flight case was already safe**, and is now covered: asking the
+companion and switching chats mid-answer keeps the answer with the chat that
+asked.
+
+### Cortex entities were named after their hit points
+
+`namesFrom()` strips a trailing `(Class)`, which is right for `[CHARACTER]` —
+`Syg (Resonator)` — and wrong for `[PARTY]`, whose shipped format is
+`Elara (Ranger): 26/45 HP`. The bracket is no longer last, the strip missed, and
+the entity reached the Cortex named `Elara (Ranger): 26/45 HP`.
+
+Entities are upserted **by name** and the HP moves every turn, so each sync
+filed a *new* Elara rather than updating the one already there — and relations,
+matched by name, never lined up. Every fixture in `tests/cortex.ts` used the
+`Name — detail` form, which is why nothing caught it; the roster's own format is
+in there now.
+
+**Checked and found clean:** `syncToCortex` captures its chat id once and uses
+that captured value for every write, so a switch mid-sync cannot split a
+campaign across two chats.
+
+### A guard is not enough when the target is looked up later
+
+Instant Action's fix above checked `chatMirror` before writing. That held until
+an unrelated change added one more `await` earlier in the switch, and the
+opening message started landing in the new chat again: a chat switch completes
+on an await boundary, and there is one *inside* the send.
+
+So the target travels with the message instead. `sendChoice()` takes the chat
+the turn belongs to and compares it in the same synchronous block as the append.
+Check-then-act across an await is not a guard; it is a smaller window.
+
+The test asserted the wrong thing too — that the roll *fails* — which pinned
+the timing rather than the requirement. A roll that finished before the user
+moved is a good roll. What must never happen is anything reaching the chat they
+moved to, and that is what it checks now.
+
 ---
 
 ## Where the port stands

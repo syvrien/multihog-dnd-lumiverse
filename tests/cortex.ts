@@ -55,6 +55,9 @@ Level: 3
 [PARTY]
 Kestrel — a ranger with a bad knee.
 Bram the Quiet — never explains the axe.
+Elara (Ranger): 26/45 HP
+Combat: BAB: +3 | Ranged (1 attack): +6 | Base AC: 13
+Gear: Shortbow (1d6+3 Piercing) | Leather Armor (+2 AC)
 [/PARTY]
 
 [BENCHED PARTY]
@@ -85,6 +88,24 @@ check('a mapped site comes through as a location',
 check('stat lines are not people',
   !candidates.some(candidate => /^(HP|Level)$/i.test(candidate.name)),
   candidates.map(c => c.name).join(', '))
+
+/*
+ * The roster's own format, taken from the shipped prompt's worked example.
+ *
+ * Every fixture above uses `Name — detail`, which is why this went unseen:
+ * `[CHARACTER]` writes `Syg (Resonator)` with the bracket last, so stripping a
+ * trailing `(...)` is enough, but `[PARTY]` writes `Elara (Ranger): 26/45 HP`
+ * and the bracket is no longer last. The whole line became the name — and
+ * because entities are upserted *by name* and the HP moves every turn, each
+ * sync filed a new Elara instead of updating the one already there.
+ */
+check('a roster line yields the name alone', !!named('Elara'),
+  candidates.map(c => c.name).join(', '))
+check('no candidate carries stats in its name',
+  !candidates.some(candidate => /\d+\/\d+|\bHP\b|\(/.test(candidate.name)),
+  candidates.map(c => c.name).join(', '))
+check('and the roster’s own stat lines are still skipped',
+  !candidates.some(candidate => /^(Combat|Gear)$/i.test(candidate.name)))
 
 console.log('\n── standing becomes a real edge ──')
 check('a friend is an ally', named('Kestrel')?.relation === 'ally',

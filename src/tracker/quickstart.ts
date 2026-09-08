@@ -229,7 +229,7 @@ function abandoned(chatId: string | null, onStep?: (label: string) => void): Qui
 
 export async function runQuickStart(
   options: QuickStartOptions,
-  sendOpening: (text: string) => Promise<void> | void,
+  sendOpening: (text: string, intoChatId: string | null) => Promise<void> | void,
   onStep?: (label: string) => void,
 ): Promise<QuickStartResult> {
   if (running) return { ok: false, reason: 'Quick Start is already running' }
@@ -345,7 +345,11 @@ export async function runQuickStart(
     // Action is that the story has already started when it hands back.
     if (options.sendStarter !== false) {
       onStep?.('Starting the adventure…')
-      await sendOpening(bits.buildInstantActionOpeningMessage(instructions))
+      // The target goes with the message rather than being looked up when it
+      // is sent. A guard here would not be enough: a chat switch completes on
+      // an await boundary, and there is one inside the send itself, so the
+      // chat could move between passing the check and appending the message.
+      await sendOpening(bits.buildInstantActionOpeningMessage(instructions), chatIdAtStart)
       onStep?.(`Ready — ${charName} (${readyDetail})`)
       return { ok: true, name: charName, detail: readyDetail, started: true }
     }
