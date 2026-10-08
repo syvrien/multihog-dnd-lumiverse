@@ -25,6 +25,45 @@ export interface EditResult {
   memo?: string
 }
 
+/**
+ * Upstream's own result vocabulary for `sendDirectPrompt`.
+ *
+ * Upstream implements the runtime action in `index.js` — the file this port
+ * replaces — and from 2026.9 the engine reads it: `character-creator.js`
+ * asserts `result.success` and treats `status: 'chat_changed' | 'cancelled'`
+ * as "stopped" rather than "failed". The port's version returned `{ ok }`
+ * alone, so after a re-port every character roll threw "no character sheet"
+ * with a perfectly good sheet in hand.
+ */
+export type DirectPromptStatus =
+  | 'changed' | 'unchanged' | 'busy' | 'unavailable'
+  | 'no_output' | 'chat_changed' | 'cancelled' | 'failed'
+
+export interface DirectPromptResult extends EditResult {
+  success: boolean
+  status: DirectPromptStatus
+  message?: string
+}
+
+/**
+ * Build both vocabularies from one status, so `ok` and `success` cannot drift
+ * apart — the port's own callers read the first, the engine reads the second.
+ */
+function directResult(
+  status: DirectPromptStatus,
+  fields: { changed?: boolean, reason?: string, memo?: string } = {},
+): DirectPromptResult {
+  const success = status === 'changed' || status === 'unchanged'
+  return {
+    ok: success,
+    success,
+    status,
+    changed: fields.changed ?? status === 'changed',
+    ...(fields.reason ? { reason: fields.reason, message: fields.reason } : {}),
+    ...(fields.memo !== undefined ? { memo: fields.memo } : {}),
+  }
+}
+
 interface EngineBits {
   getSettings: () => Record<string, any>
   saveChatState: (chatId: string, opts?: Record<string, unknown>) => unknown
@@ -201,12 +240,34 @@ export interface DirectPromptOptions {
 export async function sendDirectPrompt(
   instruction: string,
   options: DirectPromptOptions = {},
-): Promise<EditResult> {
+): Promise<DirectPromptResult> {
   const message = String(instruction ?? '').trim()
-  if (!message) return { ok: false, changed: false, reason: 'nothing to ask' }
+  if (!message) return directResult('failed', { reason: 'nothing to ask' })
   if (!spindle.permissions.has('generation')) {
-    return { ok: false, changed: false, reason: 'generation permission not granted' }
+    return directResult('unavailable', { reason: 'generation permission not granted' })
   }
+
+  /*
+   * Which chat this belongs to, held across the model call.
+   *
+   * `prior` and `settings` below are read now, and the merge is committed
+   * after a model call long enough to switch chats in. Without this the merge
+   * — computed against the departing chat's memo — was written into whichever
+   * chat was live by then. Upstream's implementation has had the same check
+   * since 2026.9; the port's reimplementation did not.
+   *
+   * The epoch guard rather than an id comparison, so an A → B → A round trip
+   * is caught too: the projection was swapped out and back, and `prior` may no
+   * longer be what the arriving copy of A holds. With no chat open there is
+   * nothing to lose ownership of, and the old behaviour stands.
+   */
+  const startChat = chatMirror.getChatId()
+  const { createChatCommitGuard } = await import('../engine/src/state/pass-affinity.js') as {
+    createChatCommitGuard: (id: string | null, current: () => string | null) => () => boolean
+  }
+  const ownsChat = startChat
+    ? createChatCommitGuard(startChat, () => chatMirror.getChatId())
+    : (): boolean => true
 
   const bits = await engine()
   const settings = bits.getSettings()
@@ -248,10 +309,19 @@ export async function sendDirectPrompt(
       { debugSource: options.debugSource ?? 'DirectPrompt' },
     )
   } catch (error) {
-    return { ok: false, changed: false, reason: (error as Error).message }
+    if (!ownsChat()) return directResult('chat_changed', { reason: 'the active chat changed' })
+    const err = error as Error
+    return directResult(err.name === 'AbortError' ? 'cancelled' : 'failed', { reason: err.message })
+  }
+  // Checked before anything is merged, let alone committed: from here on
+  // `settings` is whichever chat is live, and `prior` may not be its memo.
+  if (!ownsChat()) {
+    return directResult('chat_changed', {
+      reason: 'the active chat changed while the state model was answering — nothing was written',
+    })
   }
   if (!raw || typeof raw !== 'string') {
-    return { ok: false, changed: false, reason: 'the state model returned nothing' }
+    return directResult('no_output', { reason: 'the state model returned nothing' })
   }
 
   let output = raw
@@ -268,18 +338,16 @@ export async function sendDirectPrompt(
   }
 
   if (options.preview) {
-    return { ok: true, changed: merged !== prior, memo: merged }
+    return directResult(merged !== prior ? 'changed' : 'unchanged', { memo: merged })
   }
 
   const changed = commit(settings, bits, prior, merged)
-  return {
-    ok: true,
-    changed,
-    reason: changed ? undefined : 'the model replied but nothing changed',
-  }
+  return changed
+    ? directResult('changed')
+    : directResult('unchanged', { reason: 'the model replied but nothing changed' })
 }
 
 /** The panel's "Ask" box — a direct prompt with the default system mode. */
-export function askTracker(instruction: string): Promise<EditResult> {
+export function askTracker(instruction: string): Promise<DirectPromptResult> {
   return sendDirectPrompt(instruction)
 }

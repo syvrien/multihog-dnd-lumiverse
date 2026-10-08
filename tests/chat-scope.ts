@@ -164,6 +164,41 @@ check('and no message reached the chat switched to',
   (state.messages.get('chat-2')?.length ?? 0) === before2,
   `${state.messages.get('chat-2')?.length ?? 0} vs ${before2}`)
 
+console.log('\n── asking the tracker, then switching chats ──')
+/*
+ * `sendDirectPrompt` reads the memo, asks the model, then merges and commits.
+ * The port reimplements it — upstream's lives in `index.js` — and the port's
+ * version committed straight after the model call, into `settings`, which by
+ * then is whichever chat is live. So a correction asked in one campaign was
+ * merged against that campaign's memo and written over the other one's, and
+ * reported success. Upstream has guarded this since 2026.9; the port had not.
+ */
+const { askTracker } = await import('../src/tracker/direct-prompt')
+const BRAM_SHEET = '[CHARACTER]\nBram (Innkeeper)\nHP: 6/6\n[/CHARACTER]'
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await new Promise(resolve => setTimeout(resolve, 400))
+await writeMemo(BRAM_SHEET)
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await new Promise(resolve => setTimeout(resolve, 400))
+const chat1Before = String(settings.currentMemo)
+state.generationResponse = '[CHARACTER]\nSyg (Resonator)\nHP: 3/8\n[/CHARACTER]'
+state.duringGeneration = async () => {
+  state.duringGeneration = undefined
+  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+  await new Promise(resolve => setTimeout(resolve, 400))
+}
+const asked = await askTracker('Syg takes 5 damage.')
+await new Promise(resolve => setTimeout(resolve, 400))
+check('the answer is refused, and says why',
+  !asked.success && asked.status === 'chat_changed', `${asked.status}`)
+check('the campaign switched to keeps its own memo',
+  String(settings.chatStates?.['chat-2']?.currentMemo ?? '').includes('Bram')
+    && !String(settings.currentMemo).includes('HP: 3/8'),
+  String(settings.currentMemo).match(/\w+ \(\w+\)/)?.[0] ?? '?')
+check('and the one that asked is untouched too',
+  String(settings.chatStates?.['chat-1']?.currentMemo ?? '') === chat1Before,
+  'a merge computed against the wrong memo is not written anywhere')
+
 console.log('\n── the switch epoch upstream’s guards depend on ──')
 /*
  * `pass-affinity.js` carries upstream's chat-ownership guards, and they turn on

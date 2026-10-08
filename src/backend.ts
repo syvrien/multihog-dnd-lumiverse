@@ -25,6 +25,7 @@ import {
   setActiveChat,
 } from './compat/context'
 import { loadChatState, saveChatStateFor } from './compat/chat-state'
+import { invalidateChatCommitGuards } from './engine/src/state/pass-affinity.js'
 import { onUserResolved, setActiveUser, userScope } from './compat/user-context'
 import { flushRuntimeActions, installRuntimeActions } from './compat/runtime-actions'
 import { stripSupersededChoices } from './tracker/cyoa-history'
@@ -93,13 +94,69 @@ function send(message: ToFrontend, userId?: string): void {
  * Follow the user's active chat so `ctx.chat` and `chat_metadata` always point
  * at the right conversation.
  */
+/**
+ * Abort every pass that commits into "the active chat" after a long await.
+ *
+ * Upstream's switch handler — in `index.js`, which this port replaces — stops
+ * these five; the port stopped only the State Tracker. Each stop is separate
+ * and failure-tolerant, as upstream's are: one module failing to load must not
+ * leave the others running into the arriving chat.
+ */
+async function stopInFlightPasses(): Promise<void> {
+  const { stopStatePass } = await import('./tracker/state-pass')
+  stopStatePass()
+  // Literal specifiers, one per module, on purpose. A loop over a list of paths
+  // reads better and is invisible to the bundler: `import(path)` passes every
+  // test, which run from `src/`, and fails every time from `dist/backend.js` —
+  // where the catch below would turn that into a warning nobody reads.
+  const stops: Array<[string, () => Promise<unknown>]> = [
+    ['router', async () => {
+      const mod = await import('./engine/router.js') as any
+      mod.stopRouterPass?.()
+      mod.stopWorldProgressionPass?.()
+    }],
+    ['map updater', async () =>
+      (await import('./engine/map-updater.js') as any).stopMapUpdaterPass?.()],
+    ['map evolution', async () =>
+      (await import('./engine/map-evolution.js') as any).stopMapEvolutionPass?.()],
+    ['real-time art', async () =>
+      (await import('./engine/portraits.js') as any).stopRealtimeLocationGeneration?.({ disable: false })],
+  ]
+  for (const [name, stop] of stops) {
+    try {
+      await stop()
+    } catch (error) {
+      spindle.log.warn(`[DnD] stopping the ${name} pass on chat switch failed: ${(error as Error).message}`)
+    }
+  }
+}
+
 async function syncActiveChat(chatId: string | null): Promise<void> {
   const previous = chatMirror.getChatId()
   const switching = chatId !== previous
 
   if (switching) {
-    const { stopStatePass } = await import('./tracker/state-pass')
-    stopStatePass()
+    /*
+     * Everything in flight from before this point no longer owns its chat —
+     * and that has to be true *now*, before the first await.
+     *
+     * The epoch is what makes an A → B → A round trip detectable: comparing
+     * chat ids alone says "still chat A" and misses that A's state was swapped
+     * out and back underneath the operation. Upstream bumps it first thing in
+     * its switch handler, synchronously. The port first bumped it at the end of
+     * this block, after two awaited flushes — and a Map Architect pass mid-way
+     * through its model calls checked its guard inside that window, found it
+     * still valid, and saved into a chat the user had already left before the
+     * guard caught up with it. Hence the static import: a dynamic one is an
+     * await of its own.
+     */
+    invalidateChatCommitGuards()
+    // Then stop what upstream stops, before anything flips: these passes commit
+    // via the live prefix after long awaits. Guarded paths would also notice on
+    // their own at the next check; this ends the work rather than letting it
+    // run to the check. `disable: false` keeps a chat switch from setting the
+    // user's persistent Real-Time art off switch, as upstream is careful to.
+    await stopInFlightPasses()
     // The companion's conversation goes first, while the departing chat is
     // still the live one — the engine requires that order and the port used to
     // break it. See `flushCompanionFor`.
@@ -109,19 +166,6 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // outgoing chat before the incoming one overwrites it, or an uncommitted
     // edit is lost and the projection is left belonging to the wrong chat.
     await saveChatStateFor(previous)
-    /*
-     * Everything in flight from before this point no longer owns its chat.
-     *
-     * The epoch has to be bumped here — after the departing chat is flushed,
-     * before anything projects the arriving one. It is what makes an
-     * A → B → A round trip detectable: comparing chat ids alone says "still
-     * chat A" and misses that A's state was swapped out and back underneath
-     * the operation. Upstream's `docs/chat-ownership.md` is explicit about it.
-     */
-    const { invalidateChatCommitGuards } = await import(
-      './engine/src/state/pass-affinity.js'
-    ) as { invalidateChatCommitGuards: () => void }
-    invalidateChatCommitGuards()
   }
 
   setActiveChat(chatId)
