@@ -473,6 +473,8 @@ export type ToBackend =
   | { type: 'panel:refresh' }
   | { type: 'settings:get' }
   | { type: 'settings:patch'; patch: Record<string, unknown> }
+  /** A button in the settings pane, named by its field key. */
+  | { type: 'settings:action'; action: string }
   | { type: 'popup:result'; requestId: string; result: unknown }
   | { type: 'tracker:run' }
   /** Rebuild the memo from the whole chat, in chunks. One model call each. */

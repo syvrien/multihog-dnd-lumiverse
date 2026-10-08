@@ -29,6 +29,11 @@ export type SettingField =
     }
   /** Options are filled at runtime from the user's connection profiles. */
   | { key: string; kind: 'connection'; label: string; help?: string; fallback: string }
+  /**
+   * Not a setting: a button that asks the backend to *do* something. `key`
+   * names the action; nothing is read from or written to settings for it.
+   */
+  | { key: string; kind: 'action'; label: string; help?: string; button: string; fallback?: undefined }
 
 /**
  * A collapsible group of related fields.
@@ -128,6 +133,15 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
         help: 'On: every chat has its own character, party, quests and history, '
           + 'and switching chats switches campaigns. Off: one campaign follows you '
           + 'across every chat. Portraits stay with each chat either way.',
+      },
+      {
+        // Deleting a chat now cleans up after it as it happens; this catches up
+        // on chats deleted before that existed, or while nothing was listening.
+        key: 'cleanDeletedChats', kind: 'action', button: 'Clean up…',
+        label: 'Clean up deleted chats',
+        help: 'Removes saved campaign data left behind by chats that no longer '
+          + 'exist. Asks first, and asks again before deleting any lorebook — '
+          + 'only books no other campaign or character uses are offered.',
       },
     ],
     groups: [

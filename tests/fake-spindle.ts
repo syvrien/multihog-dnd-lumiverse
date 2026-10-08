@@ -63,6 +63,8 @@ export interface FakeState {
   personas: Array<Record<string, unknown>>
   /** The host's `activePersonaId` setting; unset means no active persona. */
   activePersonaId: string | null
+  /** Chats the user has deleted: `chats.get` answers null for them. */
+  deletedChats: Set<string>
   /** Character cards, keyed by id. */
   characterCards: Map<string, Record<string, any>>
   /** Which card each chat is played against. */
@@ -147,6 +149,7 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
       },
     ],
     activePersonaId: null,
+    deletedChats: new Set(),
     images: new Map([['img-1', { id: 'img-1', url: '/api/v1/images/img-1' }]]),
     uploads: [],
     imageGenConnections: [],
@@ -277,6 +280,9 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
       },
       async get(chatId: string, userId?: string) {
         requireUser(userId, 'chats.get')
+        // A deleted chat is gone: the host answers null. Answering with an
+        // object regardless made "is this chat really deleted?" always say no.
+        if (state.deletedChats.has(chatId)) return null
         // The real DTO carries `character_id`; returning a bare `{ id }` made
         // the port's card lookup look correct while resolving nothing.
         return {
@@ -286,7 +292,27 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
           metadata: {},
         }
       },
-      async list() { return { data: [], total: 0 } },
+      /**
+       * The user's real chat inventory, paged as the host pages it.
+       *
+       * This answered `{ data: [], total: 0 }` unconditionally — a fake that
+       * says the user has no chats would have a deleted-chat cleanup decide
+       * that *every* saved campaign belonged to a deleted chat.
+       */
+      async list(options?: { limit?: number; offset?: number; userId?: string }) {
+        requireUser(options?.userId, 'chats.list')
+        const ids = [...new Set([
+          ...state.messages.keys(),
+          ...state.chatCharacter.keys(),
+          ...(state.activeChatId ? [state.activeChatId] : []),
+        ])].filter(id => !state.deletedChats.has(id)).sort()
+        const offset = options?.offset ?? 0
+        const limit = options?.limit ?? 50
+        const data = ids.slice(offset, offset + limit).map(id => ({
+          id, character_id: state.chatCharacter.get(id) ?? null, name: id, metadata: {},
+        }))
+        return { data, total: ids.length }
+      },
     },
 
     characters: {

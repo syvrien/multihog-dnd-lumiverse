@@ -367,6 +367,16 @@ export function installSettings(
         control.appendChild(select)
         break
       }
+      case 'action': {
+        // A button, not a value: it asks the backend to do something and has
+        // nothing to show or sync back.
+        const button = ctx.dom.createElement('button', { class: 'dnd-panel__button' }) as HTMLButtonElement
+        button.type = 'button'
+        button.textContent = field.button
+        button.addEventListener('click', () => send({ type: 'settings:action', action: field.key }))
+        control.appendChild(button)
+        break
+      }
       case 'connection': {
         const select = ctx.dom.createElement('select') as HTMLSelectElement
         // Remember the configured id now; the options themselves are filled in

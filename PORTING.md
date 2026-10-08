@@ -1846,8 +1846,8 @@ configuration from an extension would be the wrong call.
 
 ## Where the port stands
 
-**Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 112 files from
-`scripts/port.mjs` — across 34 test suites and 1,015 checks. (Against the earlier
+**Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
+`scripts/port.mjs` — across 36 test suites and 1,058 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2127,3 +2127,74 @@ command reaches, and that command registers only when `SlashCommand` exists;
 here it does not. `getPresetManager()` runs only off the connection-profile
 path *and* with a `completionPresetId` set, which nothing in the port's settings
 can set. Wholesale-imported SillyTavern settings could reach the second.
+
+## Features the seam was missing
+
+Three upstream features lived entirely in `index.js`, so the port never had
+them. Two are now in place; the third is listed under what is left.
+
+### Chat Link
+
+Upstream's Chat-Linked Mode is either "each chat keeps its own campaign" or "one
+campaign follows the user". The engine always carried `chatLinkEnabled`, but
+nothing could set it, and the switch ignored it: the engine's loader and saver
+do not check the flag themselves, because upstream gates them at the call site.
+It is now a General setting, and the switch follows upstream's rules:
+
+- Portraits stay with each chat either way.
+- With the link off, the departing chat is not saved and the arriving one is
+  not loaded. Only scene-scoped state resets.
+- Turning the link on inside a chat whose saved campaign differs asks
+  Restore / Overwrite / Cancel, as upstream does.
+
+Offering that three-way choice meant the popup bridge had to honour `okButton`,
+`cancelButton` and `customButtons`. Before that, every labelled engine popup
+read as a plain "OK or Cancel?".
+
+### Deleted chats
+
+The host emits `CHAT_DELETED` and the port ignored it. A deleted chat's saved
+campaign stayed in the settings blob for good: its memo, up to twenty snapshots,
+its quests and its relationships, all rewritten on every save. Its lorebooks
+stayed in the account. Upstream 2026.9 cleans up in `deleted-chat-data.js` and
+`purge-orphaned-lorebooks.js`. Both are now ported unchanged (two TRACKER_SLICE
+entries), and `tracker/chat-cleanup.ts` wires them with upstream's caution:
+
+- **Only verified deletions.** The cleanup runs only for a chat the host no
+  longer has, and checks again after the lorebook question in case the chat
+  came back. A failed lookup counts as "still exists".
+- **Lorebooks are their own question.** A book is offered only if it was
+  recorded for that chat, no other saved campaign records it, and no character
+  card or persona has it attached. Each book is re-checked just before it is
+  deleted. If the card list cannot be read, every book is protected.
+- **Catch-up asks first.** A *Clean up deleted chats* button under General
+  handles chats deleted before any of this existed. It compares saved
+  campaigns against the user's whole chat list and refuses to judge anything
+  if the pages read do not add up to the host's total.
+
+Upstream protects SillyTavern's globally selected books. The nearest Lumiverse
+equivalent is a book attached to a card or persona, so that is what is
+protected. Managed portrait files and file-backed history are upstream-only and
+are not touched.
+
+**Chat switches overlapped, and the slower one won.** Testing a deletion that
+races the host's own switch away exposed this. `syncActiveChat` is about a dozen
+awaits long, and nothing serialized it. Switching to C and then to B left the
+tracker on C while the user was in B. A deletion arriving mid-switch read the
+not-yet-updated mirror and queued a switch to "no chat" behind the real one.
+Switches now run one at a time, in the order requested, as SillyTavern's event
+loop gives upstream. Anything asking "which chat is open" while switches are
+queued reads where the queue is heading. Two details keep the queue safe:
+
+- The commit-guard epoch is bumped when a switch is requested, not when the
+  queue reaches it.
+- The memo-recovery check, which can open a popup, runs after the switch,
+  outside the queue, so an unanswered question cannot hold up every later
+  switch.
+
+### Still missing: automatic art
+
+`checkAndTriggerAutoGenerations` and its location twin generate portraits and
+scene art after each reply. Upstream calls them from `index.js` after render,
+and nothing in the port does. Every image is a paid call, so this should arrive
+switched off.

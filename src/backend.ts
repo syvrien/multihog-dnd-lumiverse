@@ -119,6 +119,46 @@ function send(message: ToFrontend, userId?: string): void {
 const branchesBeingSeeded = new Set<string>()
 
 /**
+ * Chats the host has deleted this session.
+ *
+ * When the open chat is the one deleted, the switch away from it would
+ * otherwise flush and save it as the departing chat — writing back exactly the
+ * state the cleanup is removing.
+ */
+const deletedChats = new Set<string>()
+
+/**
+ * Chat switches, one at a time, in the order they were asked for.
+ *
+ * They used to run concurrently, and a switch is a dozen awaits long — so two
+ * close together interleaved, and whichever attached last won. Switching to C
+ * and then to B left the tracker on C while the user was in B. Upstream never
+ * had this: SillyTavern delivers its switch event and the handler runs before
+ * the next one. The chain gives the port the same order.
+ *
+ * `requestedChat` is where the queue is heading — the latest chat asked for,
+ * known synchronously, which is what "the open chat" means to anything deciding
+ * what to do next while switches are still queued.
+ */
+let chatQueue: Promise<unknown> = Promise.resolve()
+let requestedChat: string | null | undefined
+
+/** A cleanup outcome in one sentence. */
+function describeCleanup(
+  result: { skipped?: string, removed: string[], lorebooksDeleted: string[], lorebooksFailed: string[] },
+  nothing: string,
+): string {
+  if (result.skipped === 'cancelled') return 'Clean-up cancelled — nothing was removed.'
+  if (result.skipped && !result.removed.length) return `Nothing removed: ${result.skipped}.`
+  if (!result.removed.length && !result.lorebooksDeleted.length) return nothing
+  const parts = [`Removed saved data for ${result.removed.length} deleted chat(s)`]
+  if (result.lorebooksDeleted.length) parts.push(`and ${result.lorebooksDeleted.length} lorebook(s)`)
+  let text = `${parts.join(' ')}.`
+  if (result.lorebooksFailed.length) text += ` ${result.lorebooksFailed.length} lorebook(s) could not be deleted.`
+  return text
+}
+
+/**
  * Decide what a chat with no saved tracker state starts from.
  *
  * A clean campaign, in general — but not unconditionally, because both of the
@@ -181,6 +221,33 @@ async function stopInFlightPasses(): Promise<void> {
 }
 
 async function syncActiveChat(chatId: string | null): Promise<void> {
+  // A request to leave the chat means in-flight work no longer owns it — now,
+  // not once the queue reaches this switch. See the epoch, below.
+  if (chatId !== requestedChat) invalidateChatCommitGuards()
+  requestedChat = chatId
+  const run = chatQueue.then(() => switchChat(chatId))
+  chatQueue = run.catch(() => undefined)
+  const switched = await run
+  // Outside the queue: this can ask the user a question, and every switch
+  // after it would wait for the answer. Skipped if the user has moved on.
+  if (switched && requestedChat === chatId && chatMirror.getChatId() === chatId) {
+    const { checkRecoveryOnOpen } = await import('./tracker/recovery')
+    await checkRecoveryOnOpen(chatId)
+  }
+}
+
+/** The open chat, counting switches already asked for but still queued. */
+function openChat(): string | null {
+  return requestedChat === undefined ? chatMirror.getChatId() : requestedChat
+}
+
+/** Run once the queued switches have finished. */
+function afterQueuedSwitches(): Promise<unknown> {
+  return chatQueue
+}
+
+/** One switch. Resolves to whether the chat actually changed. */
+async function switchChat(chatId: string | null): Promise<boolean> {
   const previous = chatMirror.getChatId()
   const switching = chatId !== previous
   // Chat Link decides whether chats each own a campaign or share one. Upstream
@@ -214,16 +281,20 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // The companion's conversation goes first, while the departing chat is
     // still the live one — the engine requires that order and the port used to
     // break it. See `flushCompanionFor`.
+    // A deleted chat has nothing to flush: saving it would write back the state
+    // its cleanup removes. The cleanup already waits for queued switches, so
+    // this is the second line, not the first, and it skips pointless work.
+    const departingExists = !!previous && !deletedChats.has(previous)
     const { flushCompanionFor } = await import('./tracker/companion')
-    await flushCompanionFor(previous)
+    if (departingExists) await flushCompanionFor(previous)
     // Portraits belong to the chat whether or not Chat Link is on.
-    await snapshotPortraitsFor(previous)
+    if (departingExists) await snapshotPortraitsFor(previous)
     // `settings.currentMemo` is a projection of one chat's state. Flush the
     // outgoing chat before the incoming one overwrites it, or an uncommitted
     // edit is lost and the projection is left belonging to the wrong chat.
     // With Chat Link off there is one shared campaign and nothing to flush it
     // into — upstream guards this save the same way.
-    if (linked) await saveChatStateFor(previous)
+    if (linked && departingExists) await saveChatStateFor(previous)
     // Two more things upstream's switch resets and the port never did, both
     // module state that otherwise follows the user into the next campaign:
     // the run-every counters and the Lorebook Agent's pending keyword pool —
@@ -282,12 +353,10 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     const { loadCompanionFor } = await import('./tracker/companion')
     await loadCompanionFor(chatId)
     await syncCompanion()
-
-    // Offer a restore if the backup looks fuller than what loaded. The engine
-    // decides whether it is worth asking; it only fires once per session.
-    const { checkRecoveryOnOpen } = await import('./tracker/recovery')
-    await checkRecoveryOnOpen(chatId)
+    // Then `syncActiveChat` offers a restore if the backup looks fuller than
+    // what loaded. The engine decides whether it is worth asking.
   }
+  return switching
 }
 
 /**
@@ -584,6 +653,16 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
       case 'settings:get':
         await syncSettings(userId)
         break
+      case 'settings:action': {
+        if (payload.action === 'cleanDeletedChats') {
+          const { cleanOrphanedChats } = await import('./tracker/chat-cleanup')
+          const result = await cleanOrphanedChats()
+          if (result.removed.length) await saveSettings()
+          send({ type: 'toast', level: result.skipped && result.skipped !== 'cancelled' ? 'warning' : 'success',
+            message: describeCleanup(result, 'Nothing to clean up — every saved campaign has its chat.') }, userId)
+        }
+        break
+      }
       case 'cyoa:choose':
         await sendChoice(payload.text, userId)
         break
@@ -2041,7 +2120,7 @@ async function boot(): Promise<void> {
     const chatId = payload?.chatId ?? payload?.chat?.id ?? null
     // An update to a chat that is not open is none of the tracker's business,
     // and an update naming no chat is a refresh signal, never a switch.
-    if (!chatId || chatId !== chatMirror.getChatId()) return
+    if (!chatId || chatId !== openChat()) return
     void (async () => {
       // The open chat changed underneath us: its card, its persona, its
       // messages (a reattribution renames them) may all have moved. This is
@@ -2064,6 +2143,42 @@ async function boot(): Promise<void> {
    * Without it a forked chat opens with no character, no lore, and every NPC
    * back at zero.
    */
+  /*
+   * A chat was deleted. Clean up the campaign it leaves behind — its saved
+   * state at once, its lorebooks only if the user agrees. See
+   * `tracker/chat-cleanup.ts`.
+   */
+  teardowns.push(spindle.on('CHAT_DELETED', (raw: unknown, userId?: string) => {
+    setActiveUser(userId)
+    setPopupUser(userId)
+    const payload = raw as { id?: string, chatId?: string }
+    const chatId = payload?.id ?? payload?.chatId
+    if (!chatId) return
+    // Before the first await: a switch away from this chat can already be in
+    // flight, and must not save it on the way out.
+    deletedChats.add(chatId)
+    // If it was the open chat — or the one a queued switch is heading to —
+    // there is no chat open now. Decided here, synchronously: the host may
+    // already have asked for a switch elsewhere, and that one must win.
+    const leave = openChat() === chatId ? syncActiveChat(null) : null
+    void (async () => {
+      await leave
+      // Clean up only once every queued switch is done with the chat.
+      await afterQueuedSwitches()
+      const { cleanDeletedChat } = await import('./tracker/chat-cleanup')
+      const result = await cleanDeletedChat(chatId)
+      if (result.removed.length) {
+        await saveSettings()
+        send({
+          type: 'toast', level: 'info',
+          message: describeCleanup(result, ''),
+        }, userId)
+      }
+    })().catch(error => {
+      spindle.log.error(`[DnD] cleaning up a deleted chat failed: ${(error as Error).message}`)
+    })
+  }))
+
   teardowns.push(spindle.on('CHAT_FORKED', (raw: unknown, userId?: string) => {
     setActiveUser(userId)
     const payload = raw as { sourceChatId?: string; forkedChatId?: string }

@@ -53,6 +53,12 @@ const TRACKER_SLICE = [
   'src/features/chat/branch-campaign-utils.js',
   'src/features/chat/clone-campaign-stack.js',
   'src/features/chat/local-chat-map.js',
+  // Cleaning up after a deleted chat: its saved partition and records, and —
+  // only on confirmation — lorebooks recorded for it that no other chat
+  // claims. Both pure, with their I/O injected. Reachable only from index.js
+  // upstream (2026.9), which wires them to its CHAT_DELETED handler.
+  'src/features/chat/deleted-chat-data.js',
+  'src/features/chat/purge-orphaned-lorebooks.js',
   // Game Cartridges. Its dialogs are DOM-bound and get rebuilt; the snapshot
   // and restore underneath them are not.
   'game-cartridges.js',
