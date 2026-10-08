@@ -1,3 +1,5 @@
+import { getActiveChatId } from '../../../state-manager.js';
+import { createChatCommitGuard, chatCommitResult, ignoreChatCancellation } from '../../state/pass-affinity.js';
 import { getSettings } from '../../../state-manager.js';
 import {
     MAP_ASSET_KINDS,
@@ -220,12 +222,14 @@ function assetOptions(document) {
  * @param {{ siteRoot?: string }} [options]
  */
 export async function openMapEvolutionTestingGround({ siteRoot = '' } = {}) {
+    const ownsChat = createChatCommitGuard(getActiveChatId(), getActiveChatId);
+
     const ctx = globalThis.SillyTavern?.getContext?.();
     if (!ctx?.callGenericPopup) return;
 
     const popup = document.createElement('div');
     popup.className = 'rt-map-evo-debug';
-    let sandbox = await describeEvolutionSandbox(siteRoot);
+    let sandbox = chatCommitResult(ownsChat, await describeEvolutionSandbox(siteRoot));
     const settings = getSettings();
     let selectedArcId = '';
 
@@ -322,94 +326,125 @@ export async function openMapEvolutionTestingGround({ siteRoot = '' } = {}) {
         if (status) status.textContent = text || '';
     };
 
-    const reload = async (root = popup.querySelector('[data-debug="site"]')?.value || sandbox.siteRoot) => {
-        sandbox = await describeEvolutionSandbox(root);
+    const reload = ignoreChatCancellation(async (root = popup.querySelector('[data-debug="site"]')?.value || sandbox.siteRoot) => {
+
+        if (!ownsChat()) return;
+        sandbox = chatCommitResult(ownsChat, await describeEvolutionSandbox(root));
         const subjects = collectEvolutionArcSubjects(sandbox?.memory?.storedThreads || [], sandbox?.document);
         if (selectedArcId && !subjects.some(subject => subject.id === selectedArcId)) selectedArcId = '';
         paint();
-    };
+    });
 
     const bind = () => {
-        popup.querySelector('[data-debug="site"]')?.addEventListener('change', async (event) => {
-            await reload(event.target.value);
-        });
-        popup.querySelector('[data-debug-action="set-time"]')?.addEventListener('click', async () => {
+        popup.querySelector('[data-debug="site"]')?.addEventListener('change', ignoreChatCancellation(async (event) => {
+
+            if (!ownsChat()) return;
+            chatCommitResult(ownsChat, await reload(event.target.value));
+
+        }));
+        popup.querySelector('[data-debug-action="set-time"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             const result = setCampaignTimeLabel(popup.querySelector('[data-debug="set-time"]')?.value);
             setStatus(result.ok ? `Time set to ${result.timeLabel}.` : result.error);
-            if (result.ok) await reload();
-        });
-        popup.querySelector('[data-debug-action="advance-hours"]')?.addEventListener('click', async () => {
+            if (result.ok) chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="advance-hours"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             const hours = Number(popup.querySelector('[data-debug="hours"]')?.value) || 12;
             const result = advanceCampaignTime(hours * 60);
             setStatus(result.ok ? `Advanced to ${result.timeLabel}.` : result.error);
-            if (result.ok) await reload();
-        });
-        popup.querySelector('[data-debug-action="advance-day"]')?.addEventListener('click', async () => {
+            if (result.ok) chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="advance-day"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             const result = advanceCampaignTime(1440);
             setStatus(result.ok ? `Advanced to ${result.timeLabel}.` : result.error);
-            if (result.ok) await reload();
-        });
-        popup.querySelector('[data-debug-action="evolve"]')?.addEventListener('click', async () => {
+            if (result.ok) chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="evolve"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             setStatus(`Running Map Evolution for ${sandbox.siteRoot}…`);
-            const result = await debugRunEvolution(sandbox.siteRoot);
+            const result = chatCommitResult(ownsChat, await debugRunEvolution(sandbox.siteRoot));
             if (result?.skipped === 'busy') setStatus('An agent is already running.');
             else if (result?.ok && result?.applied) setStatus(`Evolution applied ${result.applied} material update(s). Undo to rewind that pass.`);
             else if (result?.ok) setStatus('Evolution ran; no material change. Undo to rewind that pass.');
             else setStatus(result?.error || 'Evolution failed.');
-            await reload();
-        });
-        popup.querySelector('[data-debug-action="simulate"]')?.addEventListener('click', async () => {
+            chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="simulate"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             const ticks = Number(popup.querySelector('[data-debug="ticks"]')?.value) || 3;
             const hours = Number(popup.querySelector('[data-debug="hours"]')?.value) || Number(getSettings().mapEvolutionIntervalHours) || 8;
             setStatus(`Simulating ${ticks} tick(s) at ${hours}h…`);
-            const result = await debugSimulateTicks({
+            const result = chatCommitResult(ownsChat, await debugSimulateTicks({
                 siteRoot: sandbox.siteRoot,
                 ticks,
                 hoursPerTick: hours,
                 onTick: ({ index, count, timeLabel, phase }) => {
                     setStatus(`Tick ${index + 1}/${count} (${phase}) at ${timeLabel}…`);
                 },
-            });
+            }));
             if (!result.ok) setStatus(result.error || 'Simulation stopped.');
             else setStatus(`Simulated ${result.ticks} tick(s) of ${result.hoursPerTick}h. Undo to rewind that run.`);
-            await reload();
-        });
-        popup.querySelector('[data-debug-action="undo-pass"]')?.addEventListener('click', async () => {
+            chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="undo-pass"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             setStatus('Restoring the pre-pass snapshot…');
-            const result = await debugUndoLastEvolutionPass();
+            const result = chatCommitResult(ownsChat, await debugUndoLastEvolutionPass());
             if (result?.skipped === 'busy') setStatus('An agent is already running.');
             else if (result.ok) {
                 const kind = result.action?.type === 'simulate' ? 'Simulate ticks' : 'Evolve';
                 setStatus(`Undid ${kind} on ${result.siteRoot}. Redo to run that same pass again.`);
             } else setStatus(result.error || 'Undo failed.');
-            await reload();
-        });
-        popup.querySelector('[data-debug-action="redo-pass"]')?.addEventListener('click', async () => {
+            chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="redo-pass"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             const prior = peekTestingGroundLastPass();
             const kind = prior?.action?.type === 'simulate' ? 'Simulate ticks' : 'Evolve';
             setStatus(`Redoing ${kind}…`);
-            const result = await debugRedoLastEvolutionPass({
+            const result = chatCommitResult(ownsChat, await debugRedoLastEvolutionPass({
                 onTick: ({ index, count, timeLabel, phase }) => {
                     setStatus(`Redo tick ${index + 1}/${count} (${phase}) at ${timeLabel}…`);
                 },
-            });
+            }));
             if (result?.skipped === 'busy') setStatus('An agent is already running.');
             else if (result?.ok && result?.action?.type === 'simulate') setStatus(`Redid Simulate: ${result.ticks} tick(s) of ${result.hoursPerTick}h.`);
             else if (result?.ok && result?.applied) setStatus(`Redid Evolve: applied ${result.applied} material update(s).`);
             else if (result?.ok) setStatus('Redid Evolve; no material change.');
             else setStatus(result?.error || 'Redo failed.');
-            await reload();
-        });
-        popup.querySelector('[data-debug-action="clear-history"]')?.addEventListener('click', async () => {
+            chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="clear-history"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
             const root = sandbox.siteRoot;
             const confirmed = window.confirm(`Clear evolution backlog and causal threads for "${root}"?\n\nThe map occupancy, [TIME], and Last Evolved clock stay as they are. This only removes prompt history so a later Evolution pass is not biased by ticks from a previous prompt.`);
             if (!confirmed) return;
             const result = debugClearEvolutionHistory(root);
             setStatus(result.ok ? `Cleared evolution history for ${root}.` : result.error);
-            if (result.ok) await reload();
-        });
-        popup.querySelector('[data-debug-action="add"]')?.addEventListener('click', async () => {
-            const result = await debugAddAsset({
+            if (result.ok) chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="add"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
+            const result = chatCommitResult(ownsChat, await debugAddAsset({
                 siteRoot: sandbox.siteRoot,
                 name: popup.querySelector('[data-debug="add-name"]')?.value,
                 kind: popup.querySelector('[data-debug="add-kind"]')?.value,
@@ -418,28 +453,34 @@ export async function openMapEvolutionTestingGround({ siteRoot = '' } = {}) {
                 faction: popup.querySelector('[data-debug="add-faction"]')?.value,
                 cause: popup.querySelector('[data-debug="add-cause"]')?.value,
                 actor: popup.querySelector('[data-debug="add-actor"]')?.value,
-            });
+            }));
             setStatus(result.ok ? 'Entity added.' : result.error);
-            if (result.ok) await reload();
-        });
-        popup.querySelector('[data-debug-action="set"]')?.addEventListener('click', async () => {
-            const result = await debugSetAsset({
+            if (result.ok) chatCommitResult(ownsChat, await reload());
+
+        }));
+        popup.querySelector('[data-debug-action="set"]')?.addEventListener('click', ignoreChatCancellation(async () => {
+
+            if (!ownsChat()) return;
+            const result = chatCommitResult(ownsChat, await debugSetAsset({
                 siteRoot: sandbox.siteRoot,
                 assetId: popup.querySelector('[data-debug="set-asset"]')?.value,
                 state: popup.querySelector('[data-debug="set-state"]')?.value,
                 count: popup.querySelector('[data-debug="set-count"]')?.value,
                 actor: popup.querySelector('[data-debug="set-actor"]')?.value,
                 cause: popup.querySelector('[data-debug="set-cause"]')?.value,
-            });
+            }));
             setStatus(result.ok ? 'Entity updated.' : result.error);
-            if (result.ok) await reload();
-        });
+            if (result.ok) chatCommitResult(ownsChat, await reload());
+
+        }));
         popup.querySelector('[data-debug="arc-subject"]')?.addEventListener('change', (event) => {
+            if (!ownsChat()) return;
             selectedArcId = String(event.target.value || '').trim();
             paintArc();
         });
         popup.querySelectorAll('[data-debug-arc]').forEach(node => {
             node.addEventListener('click', () => {
+                if (!ownsChat()) return;
                 selectedArcId = String(node.getAttribute('data-debug-arc') || '').trim();
                 paintArc();
             });
@@ -453,15 +494,17 @@ export async function openMapEvolutionTestingGround({ siteRoot = '' } = {}) {
             node.classList.toggle('is-selected', node.getAttribute('data-debug-arc') === selectedArcId);
         });
         popup.querySelector('[data-debug="arc-subject"]')?.addEventListener('change', (event) => {
+            if (!ownsChat()) return;
             selectedArcId = String(event.target.value || '').trim();
             paintArc();
         });
     };
 
     paint();
-    await ctx.callGenericPopup(popup, ctx.POPUP_TYPE?.TEXT ?? 1, '', {
+    chatCommitResult(ownsChat, await ctx.callGenericPopup(popup, ctx.POPUP_TYPE?.TEXT ?? 1, '', {
         okButton: 'Close', cancelButton: false, wide: true, large: true,
         allowVerticalScrolling: true,
         leftAlign: true,
-    });
+    }));
+
 }

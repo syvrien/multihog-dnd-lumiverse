@@ -33,6 +33,7 @@
  */
 
 import { chatMirror } from '../compat/chat-mirror'
+import { createChatCommitGuard } from '../engine/src/state/pass-affinity.js'
 import { inheritConnections } from './connections'
 
 const GENRES = ['fantasy', 'realistic', 'scifi', 'horror'] as const
@@ -253,9 +254,17 @@ export async function runQuickStart(
    * and switching to another put the character sheet *and* an unasked-for
    * opening message into the second one — and reported success, because from
    * the roll's point of view nothing failed.
+   *
+   * The switch epoch, not an id comparison. This was an id comparison through
+   * the chat mirror, which is sound on its own — but since 2026.9 the engine
+   * guards the same roll on the epoch, and the epoch flips synchronously at the
+   * switch while the mirror flips some awaits later. In that gap the engine
+   * had already stopped the roll and this still said "same chat", so a chat
+   * switch was reported as a failure. One signal on both sides of the seam.
    */
   const chatIdAtStart = chatMirror.getChatId()
-  const movedOn = (): boolean => chatMirror.getChatId() !== chatIdAtStart
+  const ownsChat = createChatCommitGuard(chatIdAtStart, () => chatMirror.getChatId())
+  const movedOn = (): boolean => !ownsChat()
 
   running = true
   try {
@@ -357,6 +366,16 @@ export async function runQuickStart(
     onStep?.(`Ready — ${charName} (${readyDetail}). Type your first action.`)
     return { ok: true, name: charName, detail: readyDetail, started: false }
   } catch (error) {
+    // A chat switch is not a failure, however the engine phrases it. Since
+    // 2026.9 its chat-ownership guards stop the roll mid-way by throwing — an
+    // `AbortError` coded `CHAT_OWNERSHIP_LOST`, or a plain "stopped because the
+    // active chat changed" — and logging that as an error is exactly what
+    // upstream's `ignoreChatCancellation` exists to prevent. The port's own
+    // `movedOn()` is the authority here; the code covers a cancellation raised
+    // before the chat id has visibly changed.
+    if (movedOn() || (error as { code?: string })?.code === 'CHAT_OWNERSHIP_LOST') {
+      return abandoned(chatIdAtStart, onStep)
+    }
     const reason = (error as Error)?.message || String(error)
     spindle.log.error(`[DnD] Quick Start failed: ${reason}`)
     return { ok: false, reason }

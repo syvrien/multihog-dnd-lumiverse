@@ -231,7 +231,7 @@ check('the assets were placed into it',
     + JSON.stringify(mapEntry?.metadata ?? {})),
   'the creature should have landed in the flooded nave')
 
-console.log('\n── the map belongs to the chat that asked for it ──')
+console.log('\n── a map is never filed under the wrong campaign ──')
 /*
  * The Architect makes two model calls and saves afterwards, and the save asks
  * `ctx.chatId` again at that point — `router.js` calls its helper
@@ -239,6 +239,13 @@ console.log('\n── the map belongs to the chat that asked for it ──')
  * chats between the two calls filed a finished dungeon under
  * `<the other chat>_Locations` and still told the narrator "Map saved", so one
  * campaign believed in a map that had been written into another.
+ *
+ * The port first fixed this by pinning `ctx.chatId`, so the map finished and
+ * saved into the chat that asked. Upstream fixed it independently in 2026.9
+ * the other way: its chat-ownership guard *abandons* the pass. Since 2026.9
+ * the engine is upstream's, so this follows upstream — and the requirement
+ * either way is the same: nothing reaches the chat the user moved to, and the
+ * narrator is not told a map exists where it does not.
  */
 state.messages.set('chat-2', [{
   id: 'm2', chat_id: 'chat-2', index_in_chat: 0, is_user: true, role: 'user',
@@ -278,13 +285,20 @@ await settle()
 check('the user did end up in the other chat',
   SillyTavern.getContext().chatId === 'chat-2',
   String(SillyTavern.getContext().chatId))
-// Asserted positively: "no chat-2 book" is also true of a pass that failed.
-check('the map still saved, and into the chat that asked',
-  /Map saved to chat_1_Locations/.test(switched),
-  switched.split('\n')[1] ?? switched.slice(0, 110))
+// Asserted on the *reason*, not just the outcome: "nothing was written" is
+// also true of a pass that failed validation, which would prove nothing here.
+check('the pass stood down because the chat changed',
+  /active chat changed/i.test(switched),
+  switched.replace(/\s+/g, ' ').slice(0, 120))
+check('and did not tell the narrator a map was saved',
+  !/Map saved/i.test(switched))
 check('no lorebook exists for the chat switched to',
   ![...state.books.values()].some(b => /chat.?2/i.test(String(b.name))),
   [...state.books.values()].map(b => b.name).join(', '))
+check('nor was a half-built site left in the chat that asked',
+  ![...state.entries.values()].some(entry =>
+    /salt stair/i.test(String((entry as any).comment ?? '') + String((entry as any).content ?? ''))),
+  'abandoned means nothing saved, not saved somewhere safe')
 
 const errors = state.logs.filter(entry => entry.level === 'error')
 console.log('\n── errors ──')

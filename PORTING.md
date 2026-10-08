@@ -1761,13 +1761,16 @@ and deliberately so: it is wired now because by the time the consumers arrive
 the omission is invisible. `tests/chat-scope.ts` pins it down, and removing the
 call fails exactly one check: the A → B → A one.
 
-**The port's own guards were measured, not assumed.** An A → B → A round trip
-driven through the middle of an Instant Action roll lands correctly as things
-stand — the card and the opening both reach the chat that asked, and the other
-campaign's memo is untouched — because those sites re-read or carry an explicit
-target rather than holding a stale reference to the live projection. So they
-keep the id comparison; converting them would have added refusals without
-removing a defect.
+**The port's own guards were measured, not assumed** — and the conclusion did
+not survive the re-port, which is worth recording as such. Before it, an
+A → B → A round trip through an Instant Action roll landed correctly with an id
+comparison, so converting looked like it would add refusals without removing a
+defect. After it, the engine guards the same roll on the epoch, and the epoch
+flips synchronously at a switch while the chat mirror the id comparison reads
+flips some awaits later. In that gap the engine had already stopped the roll
+and the port's check still said "same chat", so it reported a chat switch as a
+failure. `quickstart.ts` uses the epoch now: one signal on both sides of the
+seam. See "The 2026.9.25 re-port" below.
 
 ---
 
@@ -1843,7 +1846,10 @@ configuration from an extension would be the wrong call.
 
 ## Where the port stands
 
-**107 of 133 upstream files, 55,387 lines**, across 33 test suites.
+**Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 112 files from
+`scripts/port.mjs` — across 34 test suites and 996 checks. (Against the earlier
+`de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
+figure has not been re-measured for the new base.)
 
 Everything upstream ships is now reachable except the parts this port replaced
 by design: `index.js` (the file the port *is*), `src/ui/panel/**` (jQuery panel
@@ -1979,3 +1985,70 @@ node scripts/port.mjs /path/to/SillyTavern-MultihogDnDFramework
 
 Add entry files as arguments to widen the slice. The script reports any import
 that leaves the extension so a new host dependency cannot slip in unnoticed.
+
+What it cannot report is a contract that moved inside `index.js`. Upstream
+implements its runtime actions and its chat-switch handler there, and that is
+the one file this port replaces — so when upstream changes what those return or
+when they run, the regenerated engine and the port's replacements disagree with
+no import in sight. The 2026.9.25 re-port hit this three times. Before trusting
+a re-port, diff `index.js` across the range and read every runtime action and
+the `CHAT_CHANGED` path.
+
+### The 2026.9.25 re-port
+
+From `de2d97b` (2026-09-06) to `d6aab00` (2026.9.25), 75 upstream commits.
+`scripts/port.mjs` ran cleanly — 24 files changed (+2,001 / −820), 5 added,
+all 16 host imports rewritten, nothing unresolved — and 22 checks failed across
+4 suites. None of the failures were in the generated code. All of them were the
+seam.
+
+**`sendDirectPrompt` changed its result.** Upstream's returns
+`{ success, status, changed, message }`, with `status` one of `changed`,
+`unchanged`, `busy`, `unavailable`, `no_output`, `chat_changed`, `cancelled`,
+`failed`, and `character-creator.js` now asserts `result.success`. The port's
+reimplementation returned `{ ok }`, so every roll threw "returned no character
+sheet" with a good sheet in hand — 21 of the 22. It returns both vocabularies
+now, built from one status so `ok` and `success` cannot disagree.
+
+**…and the port's version had a bug of its own, on `main` as well.** It
+committed straight after the model call, into whatever chat was live by then:
+asking the tracker a question in one campaign and switching mid-answer wrote
+that campaign's merged memo over the other one's, and reported success.
+Upstream has refused that commit since 2026.9. The port does now, on the epoch.
+
+**The epoch was armed too late.** It was bumped at the end of the switch, after
+two awaited flushes. A Map Architect pass between model calls checked its guard
+inside that window, found it valid, and saved a full map into the chat the user
+had just left before the guard caught up. Upstream bumps it first thing,
+synchronously; so does the port now, which is why `pass-affinity.js` is a
+static import in `backend.ts` — a dynamic one is an await of its own.
+
+**And the switch stopped one pass where upstream stops six.** The router, World
+Progression, the map updater, map evolution and Real-Time location art are now
+stopped before the chat flips, as upstream does. Each import is a literal
+specifier. A loop over a list of paths is tidier and invisible to the bundler:
+it passes every test, which run from `src/`, and fails every time from
+`dist/backend.js`, where the surrounding `catch` would have reduced it to a
+warning.
+
+**Abort, not pin, for the Map Architect.** Upstream's guard abandons a pass
+whose chat changed; the port's `withChatPinned` had finished it into the
+originating chat. The engine is upstream's, so its behaviour stands, and
+`tests/maps.ts` now asserts it — on the *reason* the pass stopped, since "nothing
+was written" is also what a failed validation produces. The pin stays: it still
+fixes `ctx.chatId` for the unguarded engine paths that read `getLivePrefix()`.
+
+**File-backed history is not ported, deliberately.** Upstream moved memo and map
+history out of `settings.json` into uploaded files, through SillyTavern's
+`/api/files/*`, an attachment registry, and a read-back of the on-disk settings
+before anything is deleted. Emulating that is a feature with real data-safety
+stakes, not a re-port fix. Uploads reach `getRequestHeaders()`, which throws, and
+upstream's own catch keeps the history inline — byte-for-byte what the port did
+before. That is verified rather than assumed, in `tests/history-storage.ts`:
+history stays in the partition, stays enumerable, reaches storage, survives a
+chat round trip, and no file pointer is ever recorded. The cost is one error
+line per save in the worker log.
+
+Do **not** use `blockHistoryPersistence()` to switch it off. It reads like the
+off switch, and `saveChatState()` and `saveProfile()` both return early when it
+is set — it is an emergency brake on all saving.
