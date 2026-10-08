@@ -108,6 +108,12 @@ Upstream issues exactly five:
 | `WORLD_INFO_UPDATED` | synthesised on `saveWorldInfo` |
 | `CHAT_RENAMED`, `MORE_MESSAGES_LOADED` | **never fire** — no host counterpart |
 
+This table is the `eventSource` shim's mapping, and the shim has no
+subscribers: the engine never subscribes itself — upstream does it in
+`index.js`. So mapping an event here makes nothing happen. What upstream does on
+each event is done in `backend.ts`, by name; see "The events nobody was
+listening to", below.
+
 ---
 
 ## Behavioural differences to watch
@@ -1847,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 38 test suites and 1,103 checks. (Against the earlier
+`scripts/port.mjs` — across 40 test suites and 1,127 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2262,3 +2268,55 @@ Agent, maps, World Progression) is postponed:
   are neither postponed nor announced.
 - The generation type is re-recorded before a postponed run, since another
   chat's generation may have overwritten it in the meantime.
+
+### The events nobody was listening to
+
+The port bridges host events into the engine's `eventSource` shim, and nothing
+ever subscribed to the shim, because upstream subscribes in `index.js`. Every
+upstream handler below was therefore dead. Each is now wired in `backend.ts`,
+and `message-events.ts` covers them:
+
+| Upstream | What it does | Port |
+|---|---|---|
+| `GENERATION_STOPPED` → `onGenerationEnded` | tracks the partial reply a stop keeps | same pipeline as `GENERATION_ENDED`; a stop that wrote nothing is skipped |
+| `MESSAGE_SWIPED` / `MESSAGE_EDITED` → `handleRelationshipSwipeChange` | rolls back the replaced reply's relationship changes and its map updater, map evolution and Lorebook Agent passes | runs when the open chat's message text or swipe changes; extras-only writes, the tracker's own included, are not edits |
+| `CHAT_CHANGED` / `CHAT_LOADED` → `catchUpMapArchitectFence` | finishes a Map Architect fence the last reply left | runs on arriving in a chat; returns at once with persistent maps off |
+| `MESSAGE_SENT` → `onMapUpdaterUserMessage` | fills a building the player says they enter, before the narrator's prompt is built | runs from the interceptor, the step the host waits for, on normal sends only |
+
+**A message from another chat landed in this one.** Every message event names
+its chat. The mirror applied them all, so a reply finishing in a chat the user
+had left was appended to the chat in front of them, and the next tracker pass
+read another story as this one's latest. Only the open chat's messages are
+applied now.
+
+### Swipes and regenerates were tracked on top of the reply they replaced
+
+Upstream stamps each tracked reply with the memo before and after it, keyed by
+swipe. When the user swipes or regenerates, the engine's interceptor puts the
+memo back, so the new reply is tracked from the state it actually follows. In
+the port, two things broke this, and either was enough on its own:
+
+- **No snapshot was written.** Upstream stamps it in `runStateModelPass`, which
+  `state-pass.ts` replaced without the stamp.
+- **No marker survived.** The mirror never saved anything the engine keeps on a
+  message: swipe snapshots, relationship rollback data, Lorebook Agent run ids,
+  "fence already processed". They lived in memory until the next re-read. That
+  covers any switch, any restart, and every host update to the message, and a
+  swipe arrives as such an update, so the snapshot was gone the moment it was
+  needed.
+
+So regenerating a 14-damage hit into a 10-damage one took the sheet to 24
+damage. Two changes fix it:
+
+- `state-pass.ts` stamps the snapshot after each commit, as upstream does.
+- The mirror persists the engine's `rpg*` markers in the host's per-message
+  extension metadata, under its own `multihog_dnd` key. Other extensions'
+  entries in that shared object are written back untouched, since the host
+  replaces the object as a whole. An older copy of a message arriving before
+  a debounced save no longer wipes markers that are still unsaved.
+
+The fake host now stores metadata the way the real one does (inside
+`extra.spindle_metadata`, read back as `metadata`). Its old version handed back
+whatever was written, wherever it was written, so it could never show this
+going missing. `swipe-rollback.ts` covers it end to end: a tracked turn, a
+restart, a regenerate, and a swipe back.

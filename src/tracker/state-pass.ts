@@ -393,6 +393,35 @@ function commitMerge(
   return { changed: true, delta }
 }
 
+/**
+ * Stamp the swipe-rollback snapshot on the reply this pass just tracked.
+ *
+ * Upstream's `runStateModelPass` does this after every chunk it commits: the
+ * memo before the reply and the memo after it, keyed by the reply's swipe.
+ * When the user swipes or regenerates, the engine's interceptor puts the memo
+ * back to the "before" for the new swipe — or the "after" of one already
+ * tracked — so the new reply is tracked from the state it actually follows.
+ *
+ * The port replaced `runStateModelPass` and dropped this, so a regenerated
+ * reply was tracked on top of the one it replaced: regenerate a hit for 14
+ * damage into a hit for 10, and the sheet took 24.
+ */
+function stampSwipeSnapshot(before: string, settings: Record<string, any>): void {
+  if (settings.stateTrackerSwipeRollback === false) return
+  const last = [...chatMirror.messages].reverse().find(message => !message.is_user)
+  if (!last) return
+  const swipe = last.swipe_id ?? 0
+  const extra = (last.extra ??= {}) as Record<string, any>
+  extra.rpgMemoRollback = { ...(extra.rpgMemoRollback ?? {}), [swipe]: before }
+  extra.rpgMemoResult = { ...(extra.rpgMemoResult ?? {}), [swipe]: String(settings.currentMemo ?? '') }
+  extra.rpgMemoActiveSwipe = swipe
+  // Saved with the message; see the markers in `chat-mirror.ts`.
+  chatMirror.markDirty()
+  void chatMirror.flush().catch(error => {
+    spindle.log.warn(`[DnD] saving the swipe snapshot failed: ${(error as Error).message}`)
+  })
+}
+
 /** Apply extracted [RELATIONS] commands, never failing the memo commit. */
 async function applyCommands(
   commands: unknown[],
@@ -501,6 +530,7 @@ export async function runStatePass(): Promise<StatePassResult> {
 
     const { memo: output, commands } = parseReply(raw, settings, bits)
     const { changed, delta } = commitMerge(priorMemo, output, settings, bits)
+    stampSwipeSnapshot(priorMemo, settings)
     if (!changed) {
       return {
         ran: true,
@@ -637,6 +667,7 @@ export async function runFullAudit(
 
       const { memo: output, commands } = parseReply(raw, settings, bits)
       const { changed, delta } = commitMerge(priorMemo, output, settings, bits)
+      stampSwipeSnapshot(priorMemo, settings)
       committed++
       if (changed) {
         changedAny = true

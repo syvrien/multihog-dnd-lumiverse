@@ -159,6 +159,44 @@ let requestedChat: string | null | undefined
 const pendingTurns = new Map<string, { generationType?: string; messageId?: string }>()
 
 /**
+ * A message in the open chat was swiped or edited: upstream's handler rolls
+ * back the relationship changes, and the map updater, map evolution and
+ * Lorebook Agent passes, that belonged to the reply that was replaced — and in
+ * regex mode reads relationships from the new text. It skips itself while a
+ * generation is running.
+ */
+async function runMessageChange(): Promise<void> {
+  try {
+    const hooks = await import('./engine/narrative-hooks.js') as {
+      handleRelationshipSwipeChange?: () => Promise<void>
+    }
+    await hooks.handleRelationshipSwipeChange?.()
+    await renderPanel()
+  } catch (error) {
+    spindle.log.warn(`[DnD] swipe/edit handling failed: ${(error as Error).message}`)
+  }
+}
+
+/**
+ * On opening a chat, finish a Map Architect fence its last reply asked for and
+ * nothing processed — upstream's `catchUpMapArchitectFence`. Returns at once
+ * unless persistent maps are on and there is an unprocessed fence.
+ */
+async function catchUpMapArchitectFence(): Promise<void> {
+  try {
+    const hooks = await import('./engine/narrative-hooks.js') as {
+      onMapArchitectAssistantMessage?: (messageId?: number, type?: string) => Promise<unknown>
+    }
+    const { withChatPinned } = await import('./compat/context')
+    await withChatPinned(async () => {
+      await hooks.onMapArchitectAssistantMessage?.(undefined, 'normal')
+    })
+  } catch (error) {
+    spindle.log.warn(`[DnD] Map Architect catch-up failed: ${(error as Error).message}`)
+  }
+}
+
+/**
  * The post-turn pipeline: the tracker, the Lorebook Agent, the map updater,
  * the evolution pass and World Progression, for the open chat's latest turn.
  *
@@ -356,6 +394,7 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // what keeps a newcomer in its first reply from being taken for old cast.
     void runAutoArt()
     if (chatId) void runPendingTurn(chatId)
+    void catchUpMapArchitectFence()
     const { checkRecoveryOnOpen } = await import('./tracker/recovery')
     await checkRecoveryOnOpen(chatId)
   }
@@ -541,6 +580,10 @@ function adaptInterceptor(handler: TrackerInterceptor) {
     await ensureUserState()
     const chatId = context?.chatId ?? chatMirror.getChatId()
     if (chatId && chatId !== chatMirror.getChatId()) await syncActiveChat(chatId)
+    // Upstream's MESSAGE_SENT step, at the point the host waits for. See
+    // `tracker/map-intent.ts`.
+    const { mapIntentBeforeNarration } = await import('./tracker/map-intent')
+    await mapIntentBeforeNarration(context)
 
     const shim: Partial<StMessage>[] = messages.map(message => ({
       name: message.name ?? '',
@@ -2372,8 +2415,32 @@ async function boot(): Promise<void> {
   for (const event of ['MESSAGE_SENT', 'MESSAGE_EDITED', 'MESSAGE_SWIPED'] as const) {
     teardowns.push(spindle.on(event, (raw: unknown, userId?: string) => {
       setActiveUser(userId)
-      const payload = raw as { message?: unknown }
-      if (payload?.message) chatMirror.applyIncoming(payload.message as never)
+      const payload = raw as {
+        chatId?: string
+        message?: { id?: string; chat_id?: string; content?: string; swipe_id?: number }
+      }
+      const message = payload?.message
+      if (!message?.id) return
+      /*
+       * Only the open chat's messages belong in the mirror. Every message
+       * event names its chat, and the mirror used to take them all: a reply
+       * finishing in a chat the user had left was saved, the host announced
+       * the save, and the message was appended to the chat in front of them —
+       * where the next tracker pass read another story as this one's latest.
+       */
+      const chatId = payload.chatId ?? message.chat_id
+      if (!chatId || chatId !== chatMirror.getChatId()) return
+      const before = chatMirror.messages.find(entry => entry._lvId === message.id)
+      const was = before ? { mes: before.mes, swipe: before.swipe_id } : null
+      chatMirror.applyIncoming(message as never)
+      if (event === 'MESSAGE_SENT') return
+      const now = chatMirror.messages.find(entry => entry._lvId === message.id)
+      // Upstream reacts to a swipe or an edit. The host also reports every
+      // extras-only write — including the tracker's own markers coming back —
+      // as an edit, and those change nothing a reader would see.
+      const changed = event === 'MESSAGE_SWIPED'
+        || (!!was && !!now && (was.mes !== now.mes || was.swipe !== now.swipe_id))
+      if (changed) void runMessageChange()
     }))
   }
   // Generation lifecycle. The engine's own `onGenerationEnded()` owns the whole
@@ -2393,11 +2460,18 @@ async function boot(): Promise<void> {
     })
   }))
 
-  teardowns.push(spindle.on('GENERATION_ENDED', (raw: unknown, userId?: string) => {
+  /*
+   * A turn ends either way. Upstream runs the same pipeline on
+   * GENERATION_STOPPED as on GENERATION_ENDED: a stopped reply is kept, and
+   * the story goes on from it. Lumiverse emits one or the other, never both.
+   * A stop before anything was written leaves no reply, and nothing to track.
+   */
+  const onTurnEnded = (stopped: boolean) => (raw: unknown, userId?: string): void => {
     setActiveUser(userId)
     const payload = raw as {
-      chatId?: string; messageId?: string; generationType?: string; error?: string
+      chatId?: string; messageId?: string; generationType?: string; error?: string; content?: string
     }
+    if (stopped && !String(payload?.content ?? '').trim()) return
     // Where the user is, counting a switch already asked for. Unknown only
     // before the first chat is attached, when following the event is right.
     const here = openChat()
@@ -2413,7 +2487,9 @@ async function boot(): Promise<void> {
     })().catch(error => {
       spindle.log.error(`[DnD] post-generation pipeline failed: ${(error as Error).message}`)
     })
-  }))
+  }
+  teardowns.push(spindle.on('GENERATION_ENDED', onTurnEnded(false)))
+  teardowns.push(spindle.on('GENERATION_STOPPED', onTurnEnded(true)))
 
   teardowns.push(spindle.on('MESSAGE_DELETED', (raw: unknown, userId?: string) => {
     setActiveUser(userId)

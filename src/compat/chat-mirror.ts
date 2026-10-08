@@ -39,6 +39,12 @@ export interface StMessage {
   extra: Record<string, unknown>
   /** Lumiverse message id. Not present on ST; the compat layer owns it. */
   _lvId?: string
+  /**
+   * The host's extension metadata for this message, as last read. Every
+   * extension shares one object and a write replaces all of it, so the port's
+   * own key is written back alongside whatever else was there.
+   */
+  _lvMeta?: Record<string, unknown>
 }
 
 /**
@@ -74,7 +80,41 @@ interface Baseline {
   mes: string
   swipeId: number
   swipes: string
+  /** The engine's own markers, serialised. See `engineMarkers`. */
+  markers: string
 }
+
+/**
+ * Where the engine's per-message markers live on the host.
+ *
+ * Upstream keeps them on the message (`extra.rpgMemoRollback`,
+ * `rpgRollbackData`, `rpgRouterRunId`, `rpgMapArchitectTextOpenerRan`, …):
+ * the memo before and after each swipe, the relationship changes to take back
+ * on a swipe, which passes already ran for which reply. SillyTavern saves
+ * `extra` with the chat. Lumiverse does not let an extension write `extra`;
+ * it gives each message one shared extension-metadata object instead, stored
+ * as `extra.spindle_metadata` and read back as `metadata`.
+ *
+ * The mirror used to write none of it. The markers lived only in memory and
+ * were lost at the next re-read — any switch, any restart, and every host
+ * update of that message, a swipe included. So the snapshot a swipe needs was
+ * gone by the time the swipe arrived.
+ */
+const METADATA_KEY = 'multihog_dnd'
+
+/** Upstream's marker keys all start `rpg`; nothing else on a message does. */
+const isMarker = (key: string): boolean => key.startsWith('rpg')
+
+function engineMarkers(message: StMessage): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(message.extra ?? {}).sort()) {
+    if (isMarker(key)) out[key] = message.extra[key]
+  }
+  return out
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
 
 const ASSISTANT_FALLBACK_NAME = 'Narrator'
 const USER_FALLBACK_NAME = 'You'
@@ -83,6 +123,11 @@ function toSt(message: HostMessage): StMessage {
   const swipes = Array.isArray(message.swipes) && message.swipes.length
     ? [...message.swipes]
     : [message.content ?? '']
+  // Reads return the extension metadata as `metadata`; events carry the raw
+  // message, where it is still inside `extra`. Accept both.
+  const { spindle_metadata: inExtra, ...hostExtra } = (message.extra ?? {}) as Record<string, unknown>
+  const metadata = isRecord(message.metadata) ? message.metadata : isRecord(inExtra) ? inExtra : {}
+  const { [METADATA_KEY]: ours, ...shared } = metadata
   return {
     name: message.name
       || (message.is_user ? USER_FALLBACK_NAME : ASSISTANT_FALLBACK_NAME),
@@ -93,8 +138,9 @@ function toSt(message: HostMessage): StMessage {
     mes: message.content ?? '',
     swipe_id: Number(message.swipe_id) || 0,
     swipes,
-    extra: { ...(message.extra ?? {}), ...(message.metadata ?? {}) },
+    extra: { ...hostExtra, ...shared, ...(isRecord(ours) ? ours : {}) },
     _lvId: message.id,
+    _lvMeta: metadata,
   }
 }
 
@@ -103,6 +149,7 @@ function baselineOf(message: StMessage): Baseline {
     mes: message.mes ?? '',
     swipeId: Number(message.swipe_id) || 0,
     swipes: JSON.stringify(message.swipes ?? []),
+    markers: JSON.stringify(engineMarkers(message)),
   }
 }
 
@@ -164,10 +211,21 @@ export class ChatMirror {
   applyIncoming(message: HostMessage): void {
     if (!message?.id) return
     const converted = toSt(message)
+    const hostBaseline = baselineOf(converted)
     const index = this.messages.findIndex(entry => entry._lvId === message.id)
+    const local = index >= 0 ? this.messages[index] : null
+    const before = this.baseline.get(message.id)
+    // Markers the engine set and the debounced save has not written yet would
+    // be replaced by the host's older copy — an echo of an earlier save, or an
+    // edit that touched something else. Keep them, and leave them unsaved so
+    // the next flush still writes them.
+    if (local && before && JSON.stringify(engineMarkers(local)) !== before.markers) {
+      for (const key of Object.keys(converted.extra)) if (isMarker(key)) delete converted.extra[key]
+      Object.assign(converted.extra, engineMarkers(local))
+    }
     if (index >= 0) this.messages[index] = converted
     else this.messages.push(converted)
-    this.baseline.set(message.id, baselineOf(converted))
+    this.baseline.set(message.id, hostBaseline)
   }
 
   applyDeletion(messageId: string): void {
@@ -203,9 +261,10 @@ export class ChatMirror {
           const { id } = await spindle.chat.appendMessage(chatId, {
             role: message.is_user ? 'user' : message.is_system ? 'system' : 'assistant',
             content: message.mes ?? '',
-            metadata: { source: 'multihog_dnd' },
+            metadata: { source: 'multihog_dnd', [METADATA_KEY]: engineMarkers(message) },
           })
           message._lvId = id
+          message._lvMeta = { source: 'multihog_dnd', [METADATA_KEY]: engineMarkers(message) }
           this.baseline.set(id, baselineOf(message))
           seen.add(id)
         } catch (error) {
@@ -220,19 +279,24 @@ export class ChatMirror {
       if (before
         && before.mes === after.mes
         && before.swipeId === after.swipeId
-        && before.swipes === after.swipes) continue
+        && before.swipes === after.swipes
+        && before.markers === after.markers) continue
 
       const patch: Record<string, unknown> = {}
       if (!before || before.mes !== after.mes) patch.content = message.mes ?? ''
       if (!before || before.swipes !== after.swipes) patch.swipes = message.swipes ?? []
       if (!before || before.swipeId !== after.swipeId) patch.swipe_id = after.swipeId
+      if (!before || before.markers !== after.markers) {
+        patch.metadata = { ...(message._lvMeta ?? {}), [METADATA_KEY]: engineMarkers(message) }
+      }
 
       try {
         if (Object.keys(patch).length) {
           // Tracker rewrites are maintenance edits: they must not force the
           // host to rebuild chat chunks on every turn.
           patch.skipChunkRebuild = true
-          await spindle.chat.updateMessage(chatId, message._lvId, patch)
+          await spindle.chat.updateMessage(chatId, message._lvId, patch as never)
+          if (patch.metadata) message._lvMeta = patch.metadata as Record<string, unknown>
         }
         this.baseline.set(message._lvId, after)
       } catch (error) {

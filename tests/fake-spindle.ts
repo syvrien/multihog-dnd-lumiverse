@@ -328,7 +328,16 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
     },
 
     chat: {
-      async getMessages(chatId: string) { return [...(state.messages.get(chatId) ?? [])] },
+      // The real host keeps extension metadata inside `extra.spindle_metadata`
+      // and reads return it split out as `metadata`. Modelled exactly: a fake
+      // that handed back whatever was written, wherever it was written, could
+      // never show metadata going missing.
+      async getMessages(chatId: string) {
+        return (state.messages.get(chatId) ?? []).map((m: any) => {
+          const { spindle_metadata, ...extra } = m.extra ?? {}
+          return { ...m, extra, metadata: spindle_metadata && typeof spindle_metadata === 'object' ? spindle_metadata : undefined }
+        })
+      },
       async appendMessage(chatId: string, message: any) {
         const id = nextId('msg')
         const list = state.messages.get(chatId) ?? []
@@ -347,8 +356,7 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
           swipe_id: 0,
           swipes: [message.content ?? ''],
           swipe_dates: [Math.floor(Date.now() / 1000)],
-          extra: {},
-          metadata: message.metadata ?? {},
+          extra: message.metadata ? { spindle_metadata: message.metadata } : {},
           parent_message_id: null,
           branch_id: null,
           created_at: Math.floor(Date.now() / 1000),
@@ -359,7 +367,11 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
       async updateMessage(chatId: string, messageId: string, patch: any) {
         const list = state.messages.get(chatId) ?? []
         const hit = list.find(m => m.id === messageId)
-        if (hit) Object.assign(hit, patch)
+        if (!hit) return
+        const { metadata, skipChunkRebuild: _skip, reasoning: _reasoning, ...fields } = patch ?? {}
+        Object.assign(hit, fields)
+        // Replaces the whole object, as the host does; it never merges.
+        if (metadata !== undefined) hit.extra = { ...(hit.extra ?? {}), spindle_metadata: metadata }
       },
       async deleteMessage(chatId: string, messageId: string) {
         const list = state.messages.get(chatId) ?? []
