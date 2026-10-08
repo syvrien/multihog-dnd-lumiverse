@@ -123,6 +123,26 @@ await chatMirror.flush()
 check('and is still saved afterwards', reply().extra?.spindle_metadata?.multihog_dnd?.rpgRouterRunId === 'run-42',
   JSON.stringify(reply().extra?.spindle_metadata?.multihog_dnd ?? {}).slice(0, 80))
 
+console.log('\n── leaving before the save runs ──')
+state.messages.set('chat-2', [host('x1', 0, true, 'Elsewhere.')].map(m => ({ ...m, chat_id: 'chat-2' })) as never)
+chatMirror.messages.find(m => m._lvId === 'm2')!.extra.rpgMapUpdaterRanForSwipe = 'swipe-0'
+chatMirror.markDirty()
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
+for (let i = 0; i < 200 && chatMirror.getChatId() !== 'chat-2'; i++) await wait(5)
+await wait(900)
+check('a marker set just before switching chats is still saved',
+  reply().extra?.spindle_metadata?.multihog_dnd?.rpgMapUpdaterRanForSwipe === 'swipe-0',
+  JSON.stringify(reply().extra?.spindle_metadata?.multihog_dnd?.rpgMapUpdaterRanForSwipe))
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
+for (let i = 0; i < 200 && chatMirror.getChatId() !== 'chat-1'; i++) await wait(5)
+await wait(400)
+chatMirror.messages.find(m => m._lvId === 'm2')!.extra.rpgMapEvolutionRanForSwipe = 'swipe-0'
+chatMirror.markDirty()
+await chatMirror.refresh()
+check('and so is one set just before the chat is re-read',
+  chatMirror.messages.find(m => m._lvId === 'm2')?.extra.rpgMapEvolutionRanForSwipe === 'swipe-0'
+  && reply().extra?.spindle_metadata?.multihog_dnd?.rpgMapEvolutionRanForSwipe === 'swipe-0')
+
 const errors = state.logs.filter(entry => entry.level === 'error')
 console.log('\n── errors ──')
 if (!errors.length) console.log('  (none)')

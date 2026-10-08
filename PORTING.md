@@ -1853,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 40 test suites and 1,127 checks. (Against the earlier
+`scripts/port.mjs` — across 40 test suites and 1,129 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2314,6 +2314,10 @@ damage. Two changes fix it:
   entries in that shared object are written back untouched, since the host
   replaces the object as a whole. An older copy of a message arriving before
   a debounced save no longer wipes markers that are still unsaved.
+- Re-reading a chat, and switching away from one, first saves whatever is
+  still waiting on that debounce. Before, a change made just before a switch
+  was dropped with the old chat's messages, and the delayed save then ran
+  against the new chat's.
 
 The fake host now stores metadata the way the real one does (inside
 `extra.spindle_metadata`, read back as `metadata`). Its old version handed back

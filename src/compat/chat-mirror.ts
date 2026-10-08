@@ -172,17 +172,36 @@ export class ChatMirror {
    */
   async attach(chatId: string | null): Promise<void> {
     if (chatId === this.chatId && !this.dirty) return
+    // Save what the engine changed in the chat being left first. Its messages
+    // are about to be dropped, and the debounced save would run later against
+    // the next chat's.
+    if (chatId !== this.chatId) await this.saveBeforeDropping()
     this.chatId = chatId
     await this.refresh()
   }
 
-  /** Re-read the whole chat from the host and rebuild the mirror in place. */
+  /**
+   * Re-read the whole chat from the host and rebuild the mirror in place —
+   * after saving anything still waiting on the debounced save, which the
+   * rebuild would otherwise discard.
+   */
   refresh(): Promise<void> {
     if (this.syncing) return this.syncing
-    this.syncing = this.doRefresh().finally(() => {
-      this.syncing = null
-    })
+    this.syncing = this.saveBeforeDropping()
+      .then(() => this.doRefresh())
+      .finally(() => {
+        this.syncing = null
+      })
     return this.syncing
+  }
+
+  private async saveBeforeDropping(): Promise<void> {
+    if (!this.dirty || !this.chatId) return
+    try {
+      await this.flush()
+    } catch (error) {
+      spindle.log.warn(`[DnD] saving the chat before re-reading it failed: ${(error as Error).message}`)
+    }
   }
 
   private async doRefresh(): Promise<void> {
