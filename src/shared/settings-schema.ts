@@ -117,6 +117,18 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
           + 'or character card already covers them. Pick which parts are sent '
           + 'under Narrator ruleset at the bottom.',
       },
+      {
+        // Upstream's Chat-Linked Mode. The engine has always carried the flag,
+        // but nothing could set it, and the switch path ignored it — so "off"
+        // was not reachable and would not have worked if it were. Turning it on
+        // inside a chat that already has a different saved campaign asks which
+        // one to keep, as upstream does; see `applyChatLinkToggle`.
+        key: 'chatLinkEnabled', kind: 'toggle', fallback: true,
+        label: 'Each chat keeps its own campaign',
+        help: 'On: every chat has its own character, party, quests and history, '
+          + 'and switching chats switches campaigns. Off: one campaign follows you '
+          + 'across every chat. Portraits stay with each chat either way.',
+      },
     ],
     groups: [
       {

@@ -217,3 +217,149 @@ export async function resetUnseenChatState(chatId: string): Promise<void> {
     await rebuildModuleInstructions()
   }
 }
+
+/**
+ * Keep the departing chat's portraits and location art with that chat.
+ *
+ * Upstream treats these as chat-owned "even when broader Chat Link is off", so
+ * this runs on every switch. With Chat Link on, `saveChatState` already writes
+ * them into the partition; with it off, nothing else would.
+ */
+export async function snapshotPortraitsFor(chatId: string | null): Promise<void> {
+  if (!chatId) return
+  const [stateManager, scope] = await Promise.all([
+    import('../engine/state-manager.js'),
+    import('../engine/src/state/portrait-chat-scope.js'),
+  ]) as any[]
+  scope.snapshotPortraitMapsForChat(stateManager.getSettings(), chatId)
+}
+
+/**
+ * Arrive in a chat with Chat Link off.
+ *
+ * Off means one campaign shared by every chat, so the memo, party and lore are
+ * deliberately left as they are — nothing is loaded from the arriving chat's
+ * partition. What upstream still resets is the state that belongs to a place
+ * in a story rather than to the campaign: when World Progression and map
+ * evolution last ran and where, the active world keys, and the quest list. Its
+ * own words: that state "must never bleed between scenarios regardless of
+ * chatLinkEnabled". Portraits follow the chat, as they always do.
+ *
+ * Upstream's link-off branch from `onChatChanged`, without the DOM.
+ */
+export async function applyUnlinkedSwitch(chatId: string): Promise<void> {
+  const [stateManager, scope, portraits] = await Promise.all([
+    import('../engine/state-manager.js'),
+    import('../engine/src/state/portrait-chat-scope.js'),
+    import('../engine/portraits.js'),
+  ]) as any[]
+  const s = stateManager.getSettings()
+  scope.loadPortraitMapsForChat(s, chatId)
+  // Auto-generation's "already seen" set is session-wide; without this the
+  // arriving chat inherits it, and a check still running for the departing
+  // chat keeps queueing against this one.
+  portraits.resetAutoGenerationTracking?.()
+  s.worldProgressionLastFiredAtMinutes = -1
+  s.worldProgressionLastFiredPeriodLabel = ''
+  s.worldProgressionSkeletonAtmosphereSummary = ''
+  s.worldProgressionLocationLastAdvanced = {}
+  s.mapEvolutionLastFiredBySite = {}
+  s.mapEvolutionBacklogBySite = {}
+  s.mapEvolutionThreadsBySite = {}
+  s.dungeonMapRevealAll = false
+  s.mapEvolutionLastSiteRoot = ''
+  s.mapEvolutionPendingExitRoot = ''
+  s.mapEvolutionWorldReportApplications = {}
+  s.activeWorldKeys = []
+  s.quests = []
+}
+
+export interface ChatLinkOutcome {
+  /** False when the user backed out of the conflict: the setting is unchanged. */
+  applied: boolean
+  message?: string
+}
+
+/**
+ * Turn Chat-Linked Mode on or off, as upstream's `applyChatLinkToggle` does.
+ *
+ * Off is just the flag: whatever campaign is live becomes the shared one.
+ * On, inside a chat, binds the live campaign to that chat — and if the chat
+ * already saved a *different* campaign, that is a real choice between two sets
+ * of work, so it is asked rather than guessed: restore the chat's saved state,
+ * keep the current session, or cancel. Whichever side loses goes into memo
+ * history rather than being discarded, through upstream's own
+ * `archiveDisplacedChatLinkMemo`.
+ */
+export async function applyChatLinkToggle(turningOn: boolean): Promise<ChatLinkOutcome> {
+  const [stateManager, chatSetup, conflict, affinity] = await Promise.all([
+    import('../engine/state-manager.js'),
+    import('../engine/src/state/chat-setup.js'),
+    import('../engine/src/features/chat/chat-link-conflict.js'),
+    import('../engine/src/state/pass-affinity.js'),
+  ]) as any[]
+  const { chatMirror } = await import('./chat-mirror')
+  const s = stateManager.getSettings()
+  const chatId = chatMirror.getChatId()
+  let message: string
+
+  if (turningOn && chatId) {
+    const ownsChat = affinity.createChatCommitGuard(chatId, () => chatMirror.getChatId())
+    const saved = s.chatStates?.[chatId]
+    // Re-enabling after carrying a setup into an unlocked chat adopts that
+    // live setup rather than replacing it with factory stock.
+    if (s.chatSetupLinkEnabled && saved && !saved.setup) saved.setup = chatSetup.snapshotChatSetup(s)
+
+    const liveContent = String(s.currentMemo ?? '').trim()
+    const savedContent = String(saved?.currentMemo ?? '').trim()
+    const liveKeys = [...(s.activeRouterKeys ?? [])].sort()
+    const savedKeys = [...(saved?.activeRouterKeys ?? [])].sort()
+    const keysChanged = JSON.stringify(liveKeys) !== JSON.stringify(savedKeys)
+    const setupChanged = !!s.chatSetupLinkEnabled && !!saved?.setup
+      && !chatSetup.chatSetupsMatch(s, saved.setup)
+    const hasConflict = (savedContent && liveContent && liveContent !== savedContent)
+      || (savedKeys.length > 0 && liveKeys.length > 0 && keysChanged)
+      || setupChanged
+
+    if (hasConflict && saved) {
+      const { callGenericPopup, POPUP_RESULT, POPUP_TYPE } = await import('./popup-bridge')
+      const choice = await callGenericPopup(
+        '<p><b>This chat already has a saved campaign, and it differs from the one '
+          + 'loaded now.</b></p>'
+          + '<p><b>Restore</b> uses this chat’s saved campaign; the current one is kept in history.<br>'
+          + '<b>Overwrite</b> keeps the current campaign and saves it to this chat; the old one is kept in history.</p>',
+        POPUP_TYPE.CONFIRM,
+        '',
+        {
+          title: 'Chat Link conflict',
+          okButton: 'Restore',
+          cancelButton: 'Overwrite',
+          customButtons: [{ text: 'Cancel', result: POPUP_RESULT.CANCELLED }],
+        },
+      )
+      // The user may have switched chats while the question was open.
+      if (!ownsChat()) return { applied: false, message: 'The chat changed — Chat Link left as it was.' }
+      if (choice === POPUP_RESULT.AFFIRMATIVE) {
+        conflict.archiveDisplacedChatLinkMemo(saved, s.currentMemo)
+        await loadChatState(chatId)
+        message = 'Chat Link on — restored this chat’s saved campaign.'
+      } else if (choice === POPUP_RESULT.NEGATIVE) {
+        conflict.archiveDisplacedChatLinkMemo(s, saved.currentMemo)
+        await saveChatStateFor(chatId)
+        message = 'Chat Link on — kept the current campaign and saved it to this chat.'
+      } else {
+        return { applied: false }
+      }
+    } else {
+      if (!(await loadChatState(chatId))) await saveChatStateFor(chatId)
+      message = 'Chat Link on — the campaign is now bound to this chat.'
+    }
+  } else if (turningOn) {
+    message = 'Chat Link on.'
+  } else {
+    message = 'Chat Link off — one campaign now follows you across every chat.'
+  }
+
+  s.chatLinkEnabled = turningOn
+  return { applied: true, message }
+}

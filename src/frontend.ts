@@ -391,27 +391,49 @@ function showPopup(
     handle.dismiss()
   }
 
-  if (isInput || isConfirm) {
-    const cancel = document.createElement('button')
-    cancel.className = 'dnd-panel__button'
-    cancel.type = 'button'
-    cancel.textContent = 'Cancel'
-    cancel.addEventListener('click', () => finish(
-      isInput ? null : POPUP_RESULT.NEGATIVE,
-    ))
-    actions.appendChild(cancel)
+  /*
+   * SillyTavern's popup options, honoured rather than dropped.
+   *
+   * `okButton` / `cancelButton` relabel the two standard buttons (or hide one,
+   * given `false`), and `customButtons` adds more, each resolving to its own
+   * `result`. The port rendered a fixed "OK / Cancel" and ignored all three, so
+   * every engine popup asking "Restore or Overwrite?" read as "OK or Cancel?"
+   * — and a three-way choice could not be offered at all.
+   */
+  const options = (message.options ?? {}) as {
+    okButton?: string | boolean
+    cancelButton?: string | boolean
+    customButtons?: Array<string | { text?: string, result?: unknown }>
   }
+  const button = (label: string, result: () => unknown, primary = false): void => {
+    const element = document.createElement('button')
+    element.className = primary ? 'dnd-panel__button dnd-popup__confirm' : 'dnd-panel__button'
+    element.type = 'button'
+    element.textContent = label
+    element.addEventListener('click', () => finish(result()))
+    actions.appendChild(element)
+  }
+  const labelFor = (option: string | boolean | undefined, fallback: string): string | null =>
+    option === false ? null : (typeof option === 'string' && option.trim() ? option : fallback)
 
-  const confirm = document.createElement('button')
-  confirm.className = 'dnd-panel__button dnd-popup__confirm'
-  confirm.type = 'button'
-  confirm.textContent = isInput || isConfirm ? 'OK' : 'Close'
-  confirm.addEventListener('click', () => finish(
-    // ST resolves INPUT popups with the typed string and the rest with a
-    // POPUP_RESULT constant.
-    isInput ? (input?.value ?? '') : POPUP_RESULT.AFFIRMATIVE,
-  ))
-  actions.appendChild(confirm)
+  if (isInput || isConfirm) {
+    const cancelLabel = labelFor(options.cancelButton, 'Cancel')
+    if (cancelLabel) button(cancelLabel, () => (isInput ? null : POPUP_RESULT.NEGATIVE))
+  }
+  for (const custom of Array.isArray(options.customButtons) ? options.customButtons : []) {
+    const text = typeof custom === 'string' ? custom : String(custom?.text ?? '')
+    if (!text.trim()) continue
+    const result = typeof custom === 'string' ? POPUP_RESULT.CANCELLED : (custom?.result ?? null)
+    button(text, () => result)
+  }
+  const okLabel = labelFor(options.okButton, isInput || isConfirm ? 'OK' : 'Close')
+  if (okLabel) {
+    button(okLabel, () => (
+      // ST resolves INPUT popups with the typed string and the rest with a
+      // POPUP_RESULT constant.
+      isInput ? (input?.value ?? '') : POPUP_RESULT.AFFIRMATIVE
+    ), true)
+  }
 
   body.appendChild(actions)
   handle.root.appendChild(body)

@@ -728,6 +728,15 @@ export async function emitHostEvent(
   payload: unknown,
   userId: string = state.userId,
 ): Promise<void> {
+  // The host emits CHAT_SWITCHED *because* the active-chat setting changed,
+  // so `chats.getActive()` answers with the new chat from then on. The fake
+  // left it pinned to its default, which raced the backend's boot-time attach
+  // (to "the active chat") against the switch a test had just made — and the
+  // loser decided which chat a commit landed in.
+  if (event === 'CHAT_SWITCHED') {
+    const chatId = (payload as { chatId?: string | null } | null)?.chatId ?? null
+    state.activeChatId = chatId
+  }
   for (const handler of state.listeners.get(event) ?? []) {
     await handler(payload, userId)
   }

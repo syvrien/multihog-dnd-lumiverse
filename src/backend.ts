@@ -24,7 +24,13 @@ import {
   loadChatMetadata,
   setActiveChat,
 } from './compat/context'
-import { loadChatState, resetUnseenChatState, saveChatStateFor } from './compat/chat-state'
+import {
+  applyUnlinkedSwitch,
+  loadChatState,
+  resetUnseenChatState,
+  saveChatStateFor,
+  snapshotPortraitsFor,
+} from './compat/chat-state'
 import { invalidateChatCommitGuards } from './engine/src/state/pass-affinity.js'
 import { onUserResolved, setActiveUser, userScope } from './compat/user-context'
 import { flushRuntimeActions, installRuntimeActions } from './compat/runtime-actions'
@@ -177,6 +183,11 @@ async function stopInFlightPasses(): Promise<void> {
 async function syncActiveChat(chatId: string | null): Promise<void> {
   const previous = chatMirror.getChatId()
   const switching = chatId !== previous
+  // Chat Link decides whether chats each own a campaign or share one. Upstream
+  // gates the switch's save and load on it at the call site, in `index.js`; the
+  // engine's loader and saver do not check it themselves, so the port must, or
+  // "off" changes nothing. Read once, before anything is switched.
+  const linked = !!(await currentSettings()).chatLinkEnabled
 
   if (switching) {
     /*
@@ -205,10 +216,14 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // break it. See `flushCompanionFor`.
     const { flushCompanionFor } = await import('./tracker/companion')
     await flushCompanionFor(previous)
+    // Portraits belong to the chat whether or not Chat Link is on.
+    await snapshotPortraitsFor(previous)
     // `settings.currentMemo` is a projection of one chat's state. Flush the
     // outgoing chat before the incoming one overwrites it, or an uncommitted
     // edit is lost and the projection is left belonging to the wrong chat.
-    await saveChatStateFor(previous)
+    // With Chat Link off there is one shared campaign and nothing to flush it
+    // into — upstream guards this save the same way.
+    if (linked) await saveChatStateFor(previous)
     // Two more things upstream's switch resets and the port never did, both
     // module state that otherwise follows the user into the next campaign:
     // the run-every counters and the Lorebook Agent's pending keyword pool —
@@ -242,7 +257,10 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
   // And who is playing: `{{user}}` and `{{persona}}` resolve from this.
   await loadActivePersona()
 
-  if (switching) {
+  if (switching && !linked && chatId) {
+    // One shared campaign: keep it, and reset only what upstream resets.
+    await applyUnlinkedSwitch(chatId)
+  } else if (switching) {
     const restored = await loadChatState(chatId)
     if (!restored && chatId) {
       const settings = await currentSettings()
@@ -255,6 +273,8 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
         await projectUnseenChat(chatId, previous === null)
       }
     }
+  }
+  if (switching) {
     // The arriving chat's own conversation, now that its state is restored.
     // This is only the load half: the departing chat was flushed above, before
     // `loadChatState` swapped the live session out from under it. A chat with
@@ -1396,7 +1416,21 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
             }
             continue
           }
+          // Not written here: switching Chat Link on can need a decision about
+          // which campaign the open chat keeps, and backing out of that must
+          // leave the setting as it was. `applyChatLinkToggle` sets it.
+          if (key === 'chatLinkEnabled') continue
           writePath(settings, key, value)
+        }
+        if ('chatLinkEnabled' in payload.patch
+          && !!payload.patch.chatLinkEnabled !== !!settings.chatLinkEnabled) {
+          const { applyChatLinkToggle } = await import('./compat/chat-state')
+          const outcome = await applyChatLinkToggle(!!payload.patch.chatLinkEnabled)
+          if (outcome.message) {
+            send({
+              type: 'toast', level: outcome.applied ? 'success' : 'info', message: outcome.message,
+            }, userId)
+          }
         }
         // Choosing a subsystem's connection stops it following the tracker's.
         // Without this the next `inheritConnections()` would overwrite the
