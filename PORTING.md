@@ -1847,7 +1847,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 36 test suites and 1,058 checks. (Against the earlier
+`scripts/port.mjs` — across 37 test suites and 1,084 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2131,7 +2131,7 @@ can set. Wholesale-imported SillyTavern settings could reach the second.
 ## Features the seam was missing
 
 Three upstream features lived entirely in `index.js`, so the port never had
-them. Two are now in place; the third is listed under what is left.
+them. All three are now in place.
 
 ### Chat Link
 
@@ -2192,9 +2192,49 @@ queued reads where the queue is heading. Two details keep the queue safe:
   outside the queue, so an unanswered question cannot hold up every later
   switch.
 
-### Still missing: automatic art
+### Automatic art
 
-`checkAndTriggerAutoGenerations` and its location twin generate portraits and
-scene art after each reply. Upstream calls them from `index.js` after render,
-and nothing in the port does. Every image is a paid call, so this should arrive
-switched off.
+Upstream's Auto-Generate options draw newcomers as they appear: your character,
+party members, enemies, NPCs in the campaign's NPC lorebook, and lorebook
+locations. The engine has all of it. `checkAndTriggerAutoGenerations` decides
+who is new, queues one image at a time, and drops a result if the user has left
+the chat. Upstream calls it at the end of every render; the port never called
+it. Now `tracker/auto-art.ts` does, after every repaint and on arriving in a
+chat, and a new **Art** settings area exposes the five options and the
+story-lookback pair.
+
+**Off by default, and inert while off.** Every image is a paid call, so every
+option starts off. With all of them off the check does not run at all, not even
+the bookkeeping. When an option is switched on, everyone it covers who has no
+picture is drawn straight away, as upstream does. NPC and location art cover
+everything in their lorebook without a picture, not only newcomers; the help
+text says so.
+
+**Drawn by the host.** The engine's default source is "native", meaning
+SillyTavern's own image extension, reached through `/imagine`. In Lumiverse that
+means the host's image generation. The compat context now carries a
+`SlashCommandParser` that knows only `/imagine`, and `compat/image-gen.ts`
+performs every image call the port makes: manual portraits, scene art and
+automatic art alike. The prompt is unescaped exactly as the engine escaped it,
+so quotes, backslashes and `word=value` text survive. `narrative-hooks.js`
+still registers no slash commands, because it also needs `SlashCommand`, which
+the context deliberately lacks.
+
+**Bugs this would have shipped with.**
+
+- **A dormant reset hook.** The chat-state loader's
+  `resetAutoGenerationTracking` hook was wired to a no-op while auto-art was
+  unported. Once auto-art ran, the "already seen" set would have leaked between
+  chats, and the first check in a newly opened campaign would have taken its
+  whole cast for newcomers and drawn every one.
+- **The arrival check matters.** A chat's first check only records who is
+  present. Without a check on arrival, the first one would come after the first
+  reply and record that reply's newcomer as old cast.
+- **No connection, no spending.** Each portrait begins with a model call that
+  writes the description. Without an image connection that call was pure
+  waste, followed by a failed image call, once per character. The check now
+  stops before either, and says why once per session. Someone who never turned
+  the options on is never warned about them.
+
+Upstream's Real-Time mode, which draws art on every arrival in the Scene View,
+is still not wired; drawing a scene there stays manual.

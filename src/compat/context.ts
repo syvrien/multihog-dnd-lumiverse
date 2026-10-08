@@ -17,7 +17,7 @@ import {
   updateWorldInfoList,
 } from './world-info'
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from './popup-bridge'
-import { executeSlashCommandsWithOptions } from './slash'
+import { executeSlashCommandsWithOptions, SlashCommandParser } from './slash'
 import {
   ConnectionManagerRequestService,
   generateQuietPrompt,
@@ -342,6 +342,7 @@ export interface StContext {
   POPUP_TYPE: typeof POPUP_TYPE
   POPUP_RESULT: typeof POPUP_RESULT
   executeSlashCommandsWithOptions: typeof executeSlashCommandsWithOptions
+  SlashCommandParser: typeof SlashCommandParser
   generateRaw: typeof generateRaw
   generateQuietPrompt: typeof generateQuietPrompt
   ConnectionManagerRequestService: typeof ConnectionManagerRequestService
@@ -390,6 +391,8 @@ const context: StContext = {
 
   // ── commands (23) ─────────────────────────────────────────────────────────
   executeSlashCommandsWithOptions,
+  // `/imagine` only — the engine's native image source. See `slash.ts`.
+  SlashCommandParser,
 
   // ── generation (7) ────────────────────────────────────────────────────────
   generateRaw,

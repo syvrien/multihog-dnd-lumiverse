@@ -57,30 +57,8 @@ async function engine(): Promise<EngineBits> {
   return cached
 }
 
-/** Whether the host has anything to generate with. */
-export async function imageGenAvailable(
-  userId?: string,
-): Promise<{ ok: boolean; reason?: string }> {
-  if (!spindle.permissions.has('image_gen')) {
-    return { ok: false, reason: 'the image_gen permission is not granted' }
-  }
-  try {
-    // Operator-scoped: every user-scoped call must name a user, and listing
-    // connections is one. Falling back to the acting user rather than making
-    // every caller thread it through.
-    const { userScope } = await import('../compat/user-context')
-    const connections = await spindle.imageGen.listConnections(userId ?? userScope())
-    if (!connections.length) {
-      return {
-        ok: false,
-        reason: 'no image generation connection is set up in Lumiverse',
-      }
-    }
-    return { ok: true }
-  } catch (error) {
-    return { ok: false, reason: (error as Error).message }
-  }
-}
+/** Whether the host has anything to generate with. See `compat/image-gen`. */
+export { imageGenAvailable } from '../compat/image-gen'
 
 /**
  * Write a prompt for an entity without generating anything.
@@ -121,6 +99,7 @@ export async function generatePortrait(
   const name = String(entityName ?? '').trim()
   if (!name) return { ok: false, reason: 'no character named' }
 
+  const { imageGenAvailable, drawImage } = await import('../compat/image-gen')
   const available = await imageGenAvailable(userId)
   if (!available.ok) return { ok: false, reason: available.reason }
 
@@ -133,19 +112,10 @@ export async function generatePortrait(
 
   let url = ''
   try {
-    const { userScope } = await import('../compat/user-context')
-    const result = await spindle.imageGen.generate({
-      prompt: text,
-      userId: userId ?? userScope(),
-      // The host persists the image either way; the base64 would only bloat
-      // the response, and the URL is what gets stored.
-      includeDataUrl: false,
-    } as never) as { imageUrl?: string; imageDataUrl?: string }
-    url = result?.imageUrl ?? result?.imageDataUrl ?? ''
+    url = await drawImage(text, { userId })
   } catch (error) {
     return { ok: false, prompt: text, reason: (error as Error).message }
   }
-  if (!url) return { ok: false, prompt: text, reason: 'the image model returned nothing' }
 
   try {
     // The engine handles the chat scoping — which partition the portrait

@@ -193,6 +193,71 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
     ],
   },
   {
+    // Upstream's Auto-Generate options. The engine decides who is new and
+    // queues one image at a time; `tracker/auto-art.ts` is the call upstream
+    // makes from `index.js`. Each image is a paid call: all of these start off,
+    // and with all of them off nothing runs.
+    id: 'art',
+    title: 'Art',
+    description: 'Portraits and location art, drawn with the image generation '
+      + 'connection set up in Lumiverse. You can always draw one by hand from a '
+      + 'portrait or the scene view; these draw on their own. Every image is a '
+      + 'separate paid call, so they all start off.',
+    fields: [
+      {
+        key: 'portraitAutoGeneratePlayer', kind: 'toggle', fallback: false,
+        label: 'Draw your character',
+        help: 'When your character appears on the tracker without a portrait — '
+          + 'including now, when you turn this on.',
+      },
+      {
+        key: 'portraitAutoGenerateParty', kind: 'toggle', fallback: false,
+        label: 'Draw party members',
+        help: 'Each companion as they join. Turning this on also draws the '
+          + 'current party, if they have no portraits.',
+      },
+      {
+        key: 'portraitAutoGenerateEnemies', kind: 'toggle', fallback: false,
+        label: 'Draw enemies',
+        help: 'Each foe as it enters a fight — which can be several images in '
+          + 'one encounter.',
+      },
+      {
+        key: 'portraitAutoGenerateNpcs', kind: 'toggle', fallback: false,
+        label: 'Draw NPCs from the campaign lorebook',
+        help: 'Every NPC in this campaign\'s NPC lorebook that has no portrait — '
+          + 'the ones already there as well as the ones the Lorebook Agent adds.',
+      },
+      {
+        key: 'portraitAutoGenerateLocations', kind: 'toggle', fallback: false,
+        label: 'Draw locations from the campaign lorebook',
+        help: 'Scene art for every location in this campaign\'s Locations '
+          + 'lorebook that has none — including all the ones already there '
+          + 'when you turn this on.',
+      },
+    ],
+    groups: [
+      {
+        title: 'Portrait descriptions',
+        description: 'Before drawing a portrait, the State Tracker\'s model '
+          + 'describes the character from the tracker. These apply to portraits '
+          + 'drawn by hand too.',
+        fields: [
+          {
+            key: 'portraitUseStoryLookback', kind: 'toggle', fallback: false,
+            label: 'Read recent story as well',
+            help: 'So a portrait shows what has happened to the character — '
+              + 'scars, new gear — not only what the tracker lists.',
+          },
+          {
+            key: 'portraitStoryLookback', kind: 'number', fallback: 5, min: 0, max: 100, step: 1,
+            label: 'Messages to read',
+          },
+        ],
+      },
+    ],
+  },
+  {
     id: 'connections',
     title: 'Connections',
     description: 'Which model each part of the framework talks to. They all follow '

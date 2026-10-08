@@ -143,6 +143,20 @@ const deletedChats = new Set<string>()
 let chatQueue: Promise<unknown> = Promise.resolve()
 let requestedChat: string | null | undefined
 
+/**
+ * Run upstream's automatic art — a check for newcomers, or with `force`, a
+ * pass over everyone the switched-on options cover. Off by default, and a
+ * no-op while it is. See `tracker/auto-art.ts`.
+ */
+async function runAutoArt(userId?: string, force = false): Promise<void> {
+  const art = await import('./tracker/auto-art')
+  const deps = {
+    refresh: () => { void renderPanel(userId) },
+    warn: (message: string) => send({ type: 'toast', level: 'warning', message }, userId),
+  }
+  await (force ? art.forceAutoArt(deps) : art.checkAutoArt(deps))
+}
+
 /** A cleanup outcome in one sentence. */
 function describeCleanup(
   result: { skipped?: string, removed: string[], lorebooksDeleted: string[], lorebooksFailed: string[] },
@@ -231,6 +245,9 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
   // Outside the queue: this can ask the user a question, and every switch
   // after it would wait for the answer. Skipped if the user has moved on.
   if (switched && requestedChat === chatId && chatMirror.getChatId() === chatId) {
+    // A chat's first art check only records who is already there, so this is
+    // what keeps a newcomer in its first reply from being taken for old cast.
+    void runAutoArt()
     const { checkRecoveryOnOpen } = await import('./tracker/recovery')
     await checkRecoveryOnOpen(chatId)
   }
@@ -524,6 +541,8 @@ async function renderPanelNow(userId?: string): Promise<void> {
       fullViewSections: [...fullViewSections],
     }) ?? ''
     send({ type: 'panel:render', html, memoPresent: true, chatId: chatMirror.getChatId() }, userId)
+    // Upstream checks for newcomers to draw at the end of every render.
+    void runAutoArt(userId)
   } catch (error) {
     spindle.log.error(`[DnD] panel render failed: ${(error as Error).message}`)
     send({ type: 'panel:render', html: '', memoPresent: false, chatId: chatMirror.getChatId() }, userId)
@@ -1484,6 +1503,8 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
       }
       case 'settings:patch': {
         const settings = await currentSettings()
+        const { AUTO_ART_KEYS } = await import('./tracker/auto-art')
+        const artWasOn = new Set(AUTO_ART_KEYS.filter(key => settings[key] === true))
         // Keys are dotted paths (`syspromptModules.loot`), so a plain
         // Object.assign would create a literal key with a dot in it.
         for (const [key, value] of Object.entries(payload.patch)) {
@@ -1510,6 +1531,13 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
               type: 'toast', level: outcome.applied ? 'success' : 'info', message: outcome.message,
             }, userId)
           }
+        }
+        // Upstream's `applyLocationImageAutoMode`: drawing lorebook locations
+        // turns location images on, and Real-Time mode (not ported) off.
+        if (payload.patch.portraitAutoGenerateLocations === true) {
+          settings.locationImages = true
+          settings.portraitAutoGenerateSceneView = false
+          settings.portraitRegenerateVisitedLocations = false
         }
         // Choosing a subsystem's connection stops it following the tracker's.
         // Without this the next `inheritConnections()` would overwrite the
@@ -1568,6 +1596,11 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
           await syncMapRuntime()
         }
         await syncSettings(userId)
+        // Switching an Auto-Generate option on draws everyone it covers now,
+        // as upstream does, rather than waiting for someone new to appear.
+        if (AUTO_ART_KEYS.some(key => !artWasOn.has(key) && settings[key] === true)) {
+          void runAutoArt(userId, true)
+        }
         await renderPanel(userId)
         break
       }

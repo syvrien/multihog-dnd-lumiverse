@@ -9,6 +9,7 @@
  *   /profile <name>                          switch connection profile
  *   /preset <name>                           switch completion preset
  *   /persona-lock                            not ported — see below
+ *   /imagine quiet=true … "<prompt>"         draw, through the host
  *
  * Anything else throws with the command echoed, so an unported call site fails
  * loudly at the point of use instead of silently doing nothing.
@@ -16,6 +17,7 @@
 
 import { updateWorldInfoList } from './world-info'
 import { userScope } from './user-context'
+import { drawImage } from './image-gen'
 
 export interface SlashResult {
   /** ST returns the command's output on `.pipe`. */
@@ -44,9 +46,22 @@ async function resolveBookId(name: string): Promise<string | null> {
   }
 }
 
+/**
+ * The prompt of an `/imagine` command.
+ *
+ * The engine quotes it and escapes `\` and `"` inside, so it cannot go
+ * through `stripFlags`, which splits on whitespace and would also eat any
+ * `word=value` in the description as a flag.
+ */
+function imaginePrompt(rest: string): string {
+  const quoted = /"((?:[^"\\]|\\.)*)"\s*$/.exec(rest)
+  if (quoted) return quoted[1].replace(/\\(.)/g, '$1')
+  return stripFlags(rest).value
+}
+
 export async function executeSlashCommandsWithOptions(
   command: string,
-  _options: Record<string, unknown> = {},
+  options: Record<string, unknown> = {},
 ): Promise<SlashResult> {
   const trimmed = String(command ?? '').trim()
   const match = /^\/([a-zA-Z][a-zA-Z0-9_-]*)\s*([\s\S]*)$/.exec(trimmed)
@@ -109,7 +124,49 @@ export async function executeSlashCommandsWithOptions(
       return { pipe: '' }
     }
 
+    case 'imagine': {
+      // Upstream's "native" image source: SillyTavern's own image extension.
+      // Here that is the host's image generation. See `compat/image-gen`.
+      const url = await drawImage(imaginePrompt(rest), {
+        signal: options.signal as AbortSignal | undefined,
+      })
+      return { pipe: url }
+    }
+
     default:
       throw new Error(`[DnD] unported slash command: ${trimmed}`)
+  }
+}
+
+/**
+ * The corner of SillyTavern's `SlashCommandParser` the engine builds itself.
+ *
+ * Only `generatePortraitDirect` does: it checks that `/imagine` is registered,
+ * parses one command and executes it, reading the image off `.pipe` and
+ * failures off `.isError`. That is all this is. Registering commands is not
+ * supported — `narrative-hooks.js` needs `SlashCommand` as well before it tries,
+ * and the context deliberately has none.
+ */
+export class SlashCommandParser {
+  static commands: Record<string, unknown> = { imagine: { name: 'imagine' } }
+
+  parse(
+    text: string,
+    _verifyCommandNames?: unknown,
+    _flags?: unknown,
+    abortController?: { signal: AbortSignal },
+  ): { execute(): Promise<{ pipe: string; isError: boolean; isAborted: boolean; errorMessage?: string }> } {
+    const signal = abortController?.signal
+    return {
+      async execute() {
+        try {
+          const { pipe } = await executeSlashCommandsWithOptions(text, { signal })
+          return { pipe, isError: false, isAborted: !!signal?.aborted }
+        } catch (error) {
+          if (signal?.aborted) return { pipe: '', isError: false, isAborted: true }
+          return { pipe: '', isError: true, isAborted: false, errorMessage: (error as Error).message }
+        }
+      },
+    }
   }
 }

@@ -17,10 +17,10 @@
  * port goes to `spindle.imageGen` instead and stores the resulting URL under
  * `settings.customLocationImages[path]`, which is where the renderer looks.
  *
- * Auto-generation on arrival is deliberately **not** wired. Upstream fires it
- * whenever the party enters somewhere new, which on a paid image endpoint is a
- * bill that arrives without anyone asking for it. Drawing a scene stays a thing
- * you choose.
+ * Upstream's Real-Time mode — art drawn on every arrival in the Scene View — is
+ * deliberately **not** wired: it bills whenever the party walks somewhere new.
+ * Drawing the campaign's lorebook locations automatically is available, as
+ * an Art option that starts off; see `auto-art.ts`.
  */
 
 interface EngineBits {
@@ -94,7 +94,7 @@ export async function readScene(): Promise<SceneView> {
 export async function generateSceneArt(
   userId?: string,
 ): Promise<{ ok: boolean; url?: string; prompt?: string; reason?: string }> {
-  const { imageGenAvailable } = await import('./portrait-gen')
+  const { imageGenAvailable, drawImage } = await import('../compat/image-gen')
   const available = await imageGenAvailable(userId)
   if (!available.ok) return { ok: false, reason: available.reason }
 
@@ -126,17 +126,10 @@ export async function generateSceneArt(
 
   let url = ''
   try {
-    const { userScope } = await import('../compat/user-context')
-    const result = await spindle.imageGen.generate({
-      prompt,
-      userId: userId ?? userScope(),
-      includeDataUrl: false,
-    } as never) as { imageUrl?: string; imageDataUrl?: string }
-    url = result?.imageUrl ?? result?.imageDataUrl ?? ''
+    url = await drawImage(prompt, { userId })
   } catch (error) {
     return { ok: false, prompt, reason: (error as Error).message }
   }
-  if (!url) return { ok: false, prompt, reason: 'the image model returned nothing' }
 
   const chatId = chatMirror.getChatId()
   if (chatId !== chatIdAtStart) {

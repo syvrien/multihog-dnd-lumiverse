@@ -29,13 +29,14 @@ async function build(): Promise<LoadChatState | null> {
   if (loader) return loader
 
   try {
-    const [factory, memo, renderer, stateManager, router, profiles] = await Promise.all([
+    const [factory, memo, renderer, stateManager, router, profiles, portraits] = await Promise.all([
       import('../engine/src/features/chat/chat-state-loader.js'),
       import('../engine/memo-processor.js'),
       import('../engine/renderer.js'),
       import('../engine/state-manager.js'),
       import('../engine/router.js'),
       import('../engine/src/state/profiles.js'),
+      import('../engine/portraits.js'),
     ]) as any[]
 
     loader = factory.createChatStateLoader({
@@ -46,6 +47,10 @@ async function build(): Promise<LoadChatState | null> {
       parseInWorldTime: memo.parseInWorldTime,
       formatInWorldTime: memo.formatInWorldTime,
       sanitizeRouterState: stateManager.sanitizeRouterState,
+      // Automatic art's "already seen" set. A no-op while that was unported;
+      // now that it runs, a stale set would make the arriving chat's whole
+      // cast look new on its first check, and draw every one of them.
+      resetAutoGenerationTracking: portraits.resetAutoGenerationTracking,
       disableManagedEntries: router.disableManagedEntries,
       loadStockPromptsFromProfile: profiles.loadStockPromptsFromProfile
         ?? stateManager.loadStockPromptsFromProfile,
@@ -60,7 +65,6 @@ async function build(): Promise<LoadChatState | null> {
       applyChatNpcRelMaxSettings: noop,
       applyChatTimeFormatSettings: noop,
       hydrateImmersionSceneArtPath: noop,
-      resetAutoGenerationTracking: noop,
       syncLocationImageDependentUi: noop,
       syncNpcPortraitDependentUi: noop,
       scheduleAgentManifestRefresh: noop,
