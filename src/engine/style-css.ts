@@ -3186,6 +3186,11 @@ export const ENGINE_CSS = `/* Theme Scopes */
     border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
+/* No HP bar for this entity: let the name span the full row instead of reserving the bar/label columns. */
+.rt-entity-row:not(:has(.rt-hp-bar-wrap)) {
+    grid-template-columns: 1fr;
+}
+
 .rt-entity-row:last-child { border-bottom: none; }
 
 .rt-entity-name {
