@@ -1847,7 +1847,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 37 test suites and 1,084 checks. (Against the earlier
+`scripts/port.mjs` — across 38 test suites and 1,103 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2238,3 +2238,27 @@ the context deliberately lacks.
 
 Upstream's Real-Time mode, which draws art on every arrival in the Scene View,
 is still not wired; drawing a scene there stays manual.
+
+### A reply that finishes after you have left its chat
+
+Lumiverse generates on the server, detached from the page. Send a message, open
+another chat, and the reply keeps streaming into the chat it was asked for.
+`GENERATION_ENDED` then names that chat. The port answered it with
+`syncActiveChat(thatChat)`, so the tracker switched campaigns under the user.
+The panel in front of them showed the other chat's character, and any edit or
+roll they made there landed in the other campaign, until the next generation in
+their own chat switched it back. SillyTavern stops a generation when you change
+chats, so upstream never had this case.
+
+Now the tracker stays where the user is, and the turn's update (tracker, Lorebook
+Agent, maps, World Progression) is postponed:
+
+- An info toast says the reply finished and where.
+- The update runs when the user goes back to that chat, against that chat.
+- It runs only if the reply it was for is still the chat's latest. A reply
+  regenerated or deleted in the meantime is no longer the turn the update
+  would describe.
+- Failed, quiet and impersonate generations add nothing to the story, so they
+  are neither postponed nor announced.
+- The generation type is re-recorded before a postponed run, since another
+  chat's generation may have overwritten it in the meantime.

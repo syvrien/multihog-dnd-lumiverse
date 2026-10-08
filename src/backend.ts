@@ -144,6 +144,113 @@ let chatQueue: Promise<unknown> = Promise.resolve()
 let requestedChat: string | null | undefined
 
 /**
+ * Turns that finished in a chat the user had already left.
+ *
+ * Lumiverse generates on the server, detached from the page, so a reply keeps
+ * streaming after the user opens another chat, and its GENERATION_ENDED names
+ * the chat it was for. The port used to switch the tracker there to run the
+ * turn's update — leaving the panel the user was looking at showing another
+ * campaign, and taking whatever they did next into it. SillyTavern stops a
+ * generation on a chat change, so upstream never meets the case.
+ *
+ * The update is postponed instead, keyed by chat, and runs on the way back in:
+ * see `runPendingTurn`. One per chat — a chat generates one reply at a time.
+ */
+const pendingTurns = new Map<string, { generationType?: string; messageId?: string }>()
+
+/**
+ * The post-turn pipeline: the tracker, the Lorebook Agent, the map updater,
+ * the evolution pass and World Progression, for the open chat's latest turn.
+ *
+ * `generationType` is passed only for a postponed turn. The engine reads the
+ * type from what `onGenerationStarted` recorded, and by the time a postponed
+ * turn runs, another chat's generation may have recorded its own since.
+ */
+async function runPostTurn(generationType?: string): Promise<void> {
+  const hooks = await import('./engine/narrative-hooks.js') as {
+    onGenerationStarted?: (type?: string) => void
+    onGenerationEnded?: () => Promise<void>
+  }
+  if (generationType !== undefined) hooks.onGenerationStarted?.(generationType)
+  /*
+   * The whole post-turn pipeline belongs to the turn that just ended.
+   *
+   * It is several model calls, and every one of the writes afterwards asks
+   * `ctx.chatId` again at the moment it writes. A chat switch anywhere in there
+   * used to redirect the lot into the chat the user had moved to. Pinning keeps
+   * the results with the turn that produced them; the passes that must not run
+   * at all against a moved-on chat (the tracker) check the chat mirror
+   * themselves and still stop.
+   */
+  const { withChatPinned } = await import('./compat/context')
+  await withChatPinned(async () => {
+    if (hooks.onGenerationEnded) {
+      await hooks.onGenerationEnded()
+    } else {
+      // Fall back to the tracker alone rather than doing nothing.
+      spindle.log.warn('[DnD] onGenerationEnded missing; running the tracker pass directly')
+      await runTrackerPass()
+    }
+  })
+  await renderPanel()
+}
+
+/** A turn finished in a chat the user has left: keep it for their return. */
+function postponeTurn(
+  payload: { chatId?: string; messageId?: string; generationType?: string; error?: string },
+  userId?: string,
+): void {
+  const chatId = payload.chatId!
+  // Nothing new to track: a failed generation added no reply, and quiet or
+  // impersonate generations never touch the story.
+  if (payload.error || payload.generationType === 'quiet' || payload.generationType === 'impersonate') return
+  pendingTurns.set(chatId, { generationType: payload.generationType, messageId: payload.messageId })
+  void (async () => {
+    const settings = await currentSettings()
+    if (settings.enabled === false) return
+    let name = ''
+    try {
+      name = String((await spindle.chats.get(chatId, userScope()))?.name ?? '')
+    } catch {
+      // The name is a courtesy.
+    }
+    send({
+      type: 'toast', level: 'info',
+      message: `A reply finished in ${name ? `"${name}"` : 'another chat'}. `
+        + 'Its tracker update will run when you go back there.',
+    }, userId)
+  })().catch(() => undefined)
+}
+
+/**
+ * Run a postponed turn on arriving in its chat — if the reply it was for is
+ * still the chat's latest. A regenerated or deleted reply means the turn it
+ * described no longer exists, and tracking it would describe something else.
+ */
+async function runPendingTurn(chatId: string): Promise<void> {
+  const pending = pendingTurns.get(chatId)
+  if (!pending) return
+  pendingTurns.delete(chatId)
+  if (pending.messageId) {
+    const latest = [...chatMirror.messages].reverse().find(entry => !entry.is_user)
+    if (latest?._lvId !== pending.messageId) {
+      spindle.log.info(`[DnD] postponed turn for ${chatId} skipped: its reply is no longer the latest`)
+      return
+    }
+  }
+  // Left again already: keep it for the next visit.
+  if (requestedChat !== chatId || chatMirror.getChatId() !== chatId) {
+    pendingTurns.set(chatId, pending)
+    return
+  }
+  try {
+    await runPostTurn(pending.generationType)
+  } catch (error) {
+    spindle.log.error(`[DnD] postponed post-generation pipeline failed: ${(error as Error).message}`)
+  }
+}
+
+/**
  * Run upstream's automatic art — a check for newcomers, or with `force`, a
  * pass over everyone the switched-on options cover. Off by default, and a
  * no-op while it is. See `tracker/auto-art.ts`.
@@ -248,6 +355,7 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // A chat's first art check only records who is already there, so this is
     // what keeps a newcomer in its first reply from being taken for old cast.
     void runAutoArt()
+    if (chatId) void runPendingTurn(chatId)
     const { checkRecoveryOnOpen } = await import('./tracker/recovery')
     await checkRecoveryOnOpen(chatId)
   }
@@ -2190,6 +2298,7 @@ async function boot(): Promise<void> {
     // Before the first await: a switch away from this chat can already be in
     // flight, and must not save it on the way out.
     deletedChats.add(chatId)
+    pendingTurns.delete(chatId)
     // If it was the open chat — or the one a queued switch is heading to —
     // there is no chat open now. Decided here, synchronously: the host may
     // already have asked for a switch elsewhere, and that one must win.
@@ -2286,37 +2395,21 @@ async function boot(): Promise<void> {
 
   teardowns.push(spindle.on('GENERATION_ENDED', (raw: unknown, userId?: string) => {
     setActiveUser(userId)
-    const payload = raw as { chatId?: string }
+    const payload = raw as {
+      chatId?: string; messageId?: string; generationType?: string; error?: string
+    }
+    // Where the user is, counting a switch already asked for. Unknown only
+    // before the first chat is attached, when following the event is right.
+    const here = openChat()
+    if (payload?.chatId && requestedChat !== undefined && payload.chatId !== here) {
+      postponeTurn(payload, userId)
+      return
+    }
     void (async () => {
       await ensureUserState()
       if (payload?.chatId) await syncActiveChat(payload.chatId)
       else await chatMirror.refresh()
-
-      const hooks = await import('./engine/narrative-hooks.js') as {
-        onGenerationEnded?: () => Promise<void>
-      }
-      /*
-       * The whole post-turn pipeline belongs to the turn that just ended.
-       *
-       * It runs the tracker, the Lorebook Agent, the map updater, the evolution
-       * pass and World Progression — several model calls, and every one of the
-       * writes afterwards asks `ctx.chatId` again at the moment it writes. A
-       * chat switch anywhere in there used to redirect the lot into the chat
-       * the user had moved to. Pinning keeps the results with the turn that
-       * produced them; the passes that must not run at all against a moved-on
-       * chat (the tracker) check the chat mirror themselves and still stop.
-       */
-      const { withChatPinned } = await import('./compat/context')
-      await withChatPinned(async () => {
-        if (hooks.onGenerationEnded) {
-          await hooks.onGenerationEnded()
-        } else {
-          // Fall back to the tracker alone rather than doing nothing.
-          spindle.log.warn('[DnD] onGenerationEnded missing; running the tracker pass directly')
-          await runTrackerPass()
-        }
-      })
-      await renderPanel()
+      await runPostTurn()
     })().catch(error => {
       spindle.log.error(`[DnD] post-generation pipeline failed: ${(error as Error).message}`)
     })
