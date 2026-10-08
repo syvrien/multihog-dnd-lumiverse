@@ -51,7 +51,7 @@ const { getSettings } = await import('../src/engine/state-manager.js') as {
 const { writeMemo } = await import('../src/tracker/direct-prompt')
 
 console.log('── chat 1 ──')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 300))
 await writeMemo(SYG)
 const settings = getSettings()
@@ -61,7 +61,7 @@ check('saved into chat 1 partition',
   String(settings.chatStates?.['chat-1']?.currentMemo ?? '').includes('Syg'))
 
 console.log('\n── switching to chat 2 ──')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await new Promise(resolve => setTimeout(resolve, 400))
 
 // A brand-new chat has no snapshot, so the live projection is whatever was
@@ -77,7 +77,7 @@ check('chat 1 partition untouched by chat 2 work',
   'one campaign must not overwrite another')
 
 console.log('\n── back to chat 1 ──')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 check('chat 1 character restored on return',
   String(settings.currentMemo).includes('Syg'),
@@ -86,7 +86,7 @@ check('chat 2 character is gone from the live view',
   !String(settings.currentMemo).includes('Vex'))
 
 console.log('\n── and back again ──')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await new Promise(resolve => setTimeout(resolve, 400))
 check('chat 2 character restored', String(settings.currentMemo).includes('Vex'),
   String(settings.currentMemo).slice(0, 30).replace(/\n/g, ' '))
@@ -107,13 +107,13 @@ const BRAM = `[CHARACTER]
 Bram (Innkeeper)
 HP: 6/6
 [/CHARACTER]`
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 state.generationQueue = [BRAM]
 await emitFrontendMessage(state, { type: 'roll:go', className: 'Rogue', genre: 'fantasy' })
 await new Promise(resolve => setTimeout(resolve, 400))
 // Rolled in chat 1; approved while chat 2 is open.
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await new Promise(resolve => setTimeout(resolve, 400))
 const chat2Before = String(settings.currentMemo)
 check('chat 2 is holding its own character to begin with',
@@ -127,7 +127,7 @@ check('the other campaign’s memo survives',
   String(settings.currentMemo).slice(0, 30).replace(/\n/g, ' '))
 
 console.log('\n── Instant Action interrupted by a chat switch ──')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 const { runQuickStart } = await import('../src/tracker/quickstart')
 state.generationQueue = [VEX, 'A quiet thief who counts doors.']
@@ -137,7 +137,7 @@ let openingSentTo: string | null = null
 // happens. A timer here would be a race the fake usually wins.
 state.duringGeneration = async () => {
   state.duringGeneration = undefined
-  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+  await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 }
 const outcome = await runQuickStart({ genre: 'fantasy' }, async (_text, intoChatId) => {
   openingSentTo = intoChatId
@@ -175,16 +175,16 @@ console.log('\n── asking the tracker, then switching chats ──')
  */
 const { askTracker } = await import('../src/tracker/direct-prompt')
 const BRAM_SHEET = '[CHARACTER]\nBram (Innkeeper)\nHP: 6/6\n[/CHARACTER]'
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await new Promise(resolve => setTimeout(resolve, 400))
 await writeMemo(BRAM_SHEET)
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 const chat1Before = String(settings.currentMemo)
 state.generationResponse = '[CHARACTER]\nSyg (Resonator)\nHP: 3/8\n[/CHARACTER]'
 state.duringGeneration = async () => {
   state.duringGeneration = undefined
-  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+  await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
   await new Promise(resolve => setTimeout(resolve, 400))
 }
 const asked = await askTracker('Syg takes 5 damage.')
@@ -219,25 +219,98 @@ const affinity = await import('../src/engine/src/state/pass-affinity.js') as {
     opts?: Record<string, unknown>,
   ) => () => boolean
 }
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 const { chatMirror } = await import('../src/compat/chat-mirror')
 const getCurrent = (): string | null => chatMirror.getChatId()
 const ownsChat = affinity.createChatCommitGuard('chat-1', getCurrent)
 check('a guard is valid where it was captured', ownsChat())
 
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await new Promise(resolve => setTimeout(resolve, 400))
 check('and invalid once the chat moves on', !ownsChat())
 
 // The reason the epoch exists at all: an id comparison says "still chat 1"
 // here, having missed that chat 1's state was swapped out and back underneath.
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 check('still invalid after an A → B → A round trip', !ownsChat(),
   'an id comparison would call this safe')
 check('while a guard captured now is good',
   affinity.createChatCommitGuard('chat-1', getCurrent)())
+
+const settle = async (id: string): Promise<void> => {
+  await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: id })
+  for (let i = 0; i < 200 && chatMirror.getChatId() !== id; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  await new Promise(resolve => setTimeout(resolve, 300))
+}
+
+console.log('\n── a chat the tracker has never seen ──')
+/*
+ * The port used to leave whatever was live in place on reaching a chat with no
+ * saved state. That started every new campaign as a copy of the last one:
+ * character sheet, inventory, quests, portraits, memo history. Upstream resets
+ * from `index.js`, which the port replaces; this pins the port's version.
+ */
+await settle('chat-1')
+await writeMemo('[CHARACTER]\nSyg (Resonator)\nHP: 3/8\n[/CHARACTER]\n[INVENTORY]\nCursed amulet\n[/INVENTORY]')
+settings.customPortraits = { Bram: '/api/v1/images/img-1' }
+state.messages.set('chat-new', [msg('m-new', 'chat-new', 'A new story begins.')])
+await settle('chat-new')
+check('starts with an empty memo, not the last campaign’s',
+  String(settings.currentMemo) === '', String(settings.currentMemo).slice(0, 40).replace(/\n/g, ' '))
+check('with no memo history', (settings.memoHistory ?? []).length === 0,
+  `${(settings.memoHistory ?? []).length} snapshot(s)`)
+check('and none of its portraits', Object.keys(settings.customPortraits ?? {}).length === 0,
+  JSON.stringify(settings.customPortraits))
+await settle('chat-1')
+check('while the campaign it came from is intact',
+  /Cursed amulet/.test(String(settings.currentMemo))
+    && settings.customPortraits?.Bram === '/api/v1/images/img-1')
+
+console.log('\n── unless Chat Link is off ──')
+// One tracker state shared by every chat, by the user's choice. Upstream
+// returns before its reset in this case; resetting would wipe that shared
+// campaign on every switch.
+settings.chatLinkEnabled = false
+const shared = String(settings.currentMemo)
+state.messages.set('chat-other', [msg('m-o', 'chat-other', 'Elsewhere.')])
+await settle('chat-other')
+check('the shared campaign follows the user', String(settings.currentMemo) === shared,
+  String(settings.currentMemo).slice(0, 30).replace(/\n/g, ' ') || '(blank)')
+settings.chatLinkEnabled = true
+await settle('chat-1')
+
+console.log('\n── a routine update to the open chat is not a switch ──')
+/*
+ * Lumiverse's CHAT_CHANGED is an *update* — a rename, a metadata write, an
+ * avatar switch — and arrives as `{ chat, changedFields }` with no `chatId`.
+ * The port read it as "switched to no chat": the mirror detached, the context
+ * went null, and a tracker pass in flight was stopped and lost its turn.
+ */
+await writeMemo('[CHARACTER]\nSyg (Resonator)\nHP: 8/8\n[/CHARACTER]')
+state.generationResponse = '[CHARACTER]\nSyg (Resonator)\nHP: 5/8\n[/CHARACTER]'
+state.duringGeneration = async () => {
+  state.duringGeneration = undefined
+  await emitHostEvent(state, 'CHAT_CHANGED', {
+    chat: { id: 'chat-1', name: 'Renamed campaign', metadata: {} },
+    changedFields: ['name'],
+  })
+  await new Promise(resolve => setTimeout(resolve, 300))
+}
+const { runStatePass } = await import('../src/tracker/state-pass')
+const pass = await runStatePass()
+await new Promise(resolve => setTimeout(resolve, 300))
+check('the chat stays attached', chatMirror.getChatId() === 'chat-1'
+  && SillyTavern.getContext().chatId === 'chat-1', String(chatMirror.getChatId()))
+check('and the pass in flight finishes its turn', !!pass.ran && /HP: 5\/8/.test(String(settings.currentMemo)),
+  `${pass.reason ?? 'ran'} — ${String(settings.currentMemo).match(/HP: [^\n]*/)?.[0]}`)
+await emitHostEvent(state, 'CHAT_CHANGED', { chat: { id: 'chat-elsewhere' }, changedFields: ['name'] })
+await new Promise(resolve => setTimeout(resolve, 300))
+check('an update to some other chat is ignored', chatMirror.getChatId() === 'chat-1',
+  String(chatMirror.getChatId()))
 
 const errors = state.logs.filter(entry => entry.level === 'error')
 console.log('\n── errors ──')

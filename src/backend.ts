@@ -24,7 +24,7 @@ import {
   loadChatMetadata,
   setActiveChat,
 } from './compat/context'
-import { loadChatState, saveChatStateFor } from './compat/chat-state'
+import { loadChatState, resetUnseenChatState, saveChatStateFor } from './compat/chat-state'
 import { invalidateChatCommitGuards } from './engine/src/state/pass-affinity.js'
 import { onUserResolved, setActiveUser, userScope } from './compat/user-context'
 import { flushRuntimeActions, installRuntimeActions } from './compat/runtime-actions'
@@ -102,6 +102,49 @@ function send(message: ToFrontend, userId?: string): void {
  * and failure-tolerant, as upstream's are: one module failing to load must not
  * leave the others running into the arriving chat.
  */
+/**
+ * Forked chats whose campaign is still being carried across.
+ *
+ * Upstream's `isBranchSeedInProgress`. Lumiverse emits `CHAT_FORKED` when the
+ * fork is made and the switch into it arrives separately, while the carry is
+ * still cloning lorebooks. Without this the switch would start the fork as a
+ * blank new campaign, and the carry would then refuse it as already having one.
+ */
+const branchesBeingSeeded = new Set<string>()
+
+/**
+ * Decide what a chat with no saved tracker state starts from.
+ *
+ * A clean campaign, in general — but not unconditionally, because both of the
+ * exceptions upstream makes are cases where blanking destroys real data:
+ *
+ *   - **Chat Link off.** The user has chosen one tracker state shared by every
+ *     chat. Upstream returns before its reset; resetting here would wipe that
+ *     shared campaign on every switch.
+ *   - **The first chat attached at startup.** Its campaign may live only in the
+ *     saved settings — an older save, or a partition write that never landed.
+ *     `shouldPreserveLiveChatStateOnBoot` adopts the live state when it has
+ *     substance and is not owned by some other chat, exactly as upstream's
+ *     deferred-boot path does; otherwise this falls through to a clean start.
+ */
+async function projectUnseenChat(chatId: string, firstAttach: boolean): Promise<void> {
+  const settings = await currentSettings() as Record<string, any>
+  if (!settings.chatLinkEnabled) return
+  if (firstAttach) {
+    const persistence = await import('./engine/src/state/chat-persistence.js') as {
+      shouldPreserveLiveChatStateOnBoot?: (s: unknown, id: string) => boolean
+      saveChatState?: (id: string) => unknown
+    }
+    if (persistence.shouldPreserveLiveChatStateOnBoot?.(settings, chatId)) {
+      persistence.saveChatState?.(chatId)
+      spindle.log.info(`[DnD] chat ${chatId} adopted the campaign already loaded at startup`)
+      return
+    }
+  }
+  await resetUnseenChatState(chatId)
+  spindle.log.info(`[DnD] chat ${chatId} is new — started a clean campaign`)
+}
+
 async function stopInFlightPasses(): Promise<void> {
   const { stopStatePass } = await import('./tracker/state-pass')
   stopStatePass()
@@ -166,6 +209,27 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // outgoing chat before the incoming one overwrites it, or an uncommitted
     // edit is lost and the projection is left belonging to the wrong chat.
     await saveChatStateFor(previous)
+    // Two more things upstream's switch resets and the port never did, both
+    // module state that otherwise follows the user into the next campaign:
+    // the run-every counters and the Lorebook Agent's pending keyword pool —
+    // keywords one story triggered, still queued when another story's agent
+    // runs — and a combat connection override left on by a fight elsewhere.
+    try {
+      const hooks = await import('./engine/narrative-hooks.js') as {
+        resetRouterTick?: (clearKeywordPool?: boolean) => void
+      }
+      hooks.resetRouterTick?.(true)
+    } catch (error) {
+      spindle.log.warn(`[DnD] resetting the agent schedule failed: ${(error as Error).message}`)
+    }
+    try {
+      const llm = await import('./engine/llm-client.js') as {
+        resetCombatProfileOverride?: (settings?: unknown) => Promise<void>
+      }
+      await llm.resetCombatProfileOverride?.()
+    } catch (error) {
+      spindle.log.warn(`[DnD] resetting the combat connection failed: ${(error as Error).message}`)
+    }
   }
 
   setActiveChat(chatId)
@@ -181,7 +245,15 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
   if (switching) {
     const restored = await loadChatState(chatId)
     if (!restored && chatId) {
-      spindle.log.info(`[DnD] chat ${chatId} has no tracker snapshot yet`)
+      const settings = await currentSettings()
+      if (branchesBeingSeeded.has(chatId)) {
+        // A fork is being carried into this chat right now. Blanking it would
+        // let a save create an empty partition first, and the carry refuses a
+        // chat that already has one. `CHAT_FORKED` loads it when done.
+        spindle.log.info(`[DnD] chat ${chatId} is a branch still being seeded`)
+      } else if (!(settings.chatStates as Record<string, unknown> | undefined)?.[chatId]) {
+        await projectUnseenChat(chatId, previous === null)
+      }
     }
     // The arriving chat's own conversation, now that its state is restored.
     // This is only the load half: the departing chat was flushed above, before
@@ -1345,6 +1417,31 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
           const { applyLoreScope } = await import('./compat/context')
           await applyLoreScope()
         }
+        /*
+         * Some settings are only *inputs* to prompt text stored separately —
+         * changing them does nothing until it is rebuilt.
+         *
+         * This has to run before the save, not after it. It used to come after,
+         * and `saveSettings()` writes immediately, so the toggle reached
+         * storage and the text it implies did not: turn "Quest deadlines" off,
+         * restart, and the panel said off while the stored prompt still taught
+         * the DEADLINE rules. One save, after everything it has to capture.
+         */
+        const patched = Object.keys(payload.patch)
+        const { applyTimeFormatChange, rebuildModuleInstructions, refreshQuestPrompt } =
+          await import('./tracker/stock-prompts')
+        if (patched.some(key => key.startsWith('syspromptModules.quests'))) {
+          await refreshQuestPrompt(settings)
+        }
+        if (patched.some(key => key.startsWith('npcRelationship'))) {
+          await rebuildModuleInstructions()
+        }
+        if ('use24hTime' in payload.patch || 'useDdMmYyFormat' in payload.patch) {
+          await applyTimeFormatChange(settings, {
+            use24hTime: 'use24hTime' in payload.patch,
+            useDdMmYyFormat: 'useDdMmYyFormat' in payload.patch,
+          })
+        }
         await saveSettings()
         if ('connectionProfileId' in payload.patch) invalidateConnectionCache()
         // Toggling a dice tool has to reach the host registry, not just disk.
@@ -1356,17 +1453,6 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
         const { affectsMapRuntime } = await import('./tracker/maps')
         if (affectsMapRuntime(Object.keys(payload.patch))) {
           await syncMapRuntime()
-        }
-        // Some settings are only *inputs* to prompt text that is stored
-        // separately — changing them does nothing until it is rebuilt.
-        const patched = Object.keys(payload.patch)
-        const { rebuildModuleInstructions, refreshQuestPrompt } =
-          await import('./tracker/stock-prompts')
-        if (patched.some(key => key.startsWith('syspromptModules.quests'))) {
-          await refreshQuestPrompt(settings)
-        }
-        if (patched.some(key => key.startsWith('npcRelationship'))) {
-          await rebuildModuleInstructions()
         }
         await syncSettings(userId)
         await renderPanel(userId)
@@ -1893,14 +1979,45 @@ async function boot(): Promise<void> {
   teardowns.push(bridgeHostEvents())
   teardowns.push(routeFrontendMessages())
 
-  // Keep the mirror pointed at whatever chat the user is in.
-  for (const event of ['CHAT_CHANGED', 'CHAT_SWITCHED'] as const) {
-    teardowns.push(spindle.on(event, (raw: unknown, userId?: string) => {
-      setActiveUser(userId)
-      const payload = raw as { chatId?: string | null }
-      void syncActiveChat(payload?.chatId ?? null)
-    }))
-  }
+  /*
+   * Keep the mirror pointed at whatever chat the user is in.
+   *
+   * The two events are not synonyms, and treating them as one was a bug.
+   * `CHAT_SWITCHED` is the switch: the host emits it when the active chat
+   * setting changes, as `{ chatId }`, and a null id genuinely means "no chat".
+   * `CHAT_CHANGED` is an *update* to a chat — a rename, a metadata write, an
+   * avatar switch, messages reattributed to a persona — and mostly arrives as
+   * `{ chat, changedFields }` with no `chatId` at all.
+   *
+   * Both used to go through `syncActiveChat(payload.chatId ?? null)`, so every
+   * routine update read as "switched to no chat": the mirror detached, the
+   * context went null, and every pass in flight was stopped — a tracker pass
+   * running while the host renamed the chat lost that turn's update. Upstream
+   * hit the same thing from the other side; its handler comments that a bare
+   * CHAT_CHANGED "used to wipe currentMemo/memoHistory".
+   */
+  teardowns.push(spindle.on('CHAT_SWITCHED', (raw: unknown, userId?: string) => {
+    setActiveUser(userId)
+    const payload = raw as { chatId?: string | null }
+    void syncActiveChat(payload?.chatId ?? null)
+  }))
+  teardowns.push(spindle.on('CHAT_CHANGED', (raw: unknown, userId?: string) => {
+    setActiveUser(userId)
+    const payload = raw as { chatId?: string | null, chat?: { id?: string } | null }
+    const chatId = payload?.chatId ?? payload?.chat?.id ?? null
+    // An update to a chat that is not open is none of the tracker's business,
+    // and an update naming no chat is a refresh signal, never a switch.
+    if (!chatId || chatId !== chatMirror.getChatId()) return
+    void (async () => {
+      // The open chat changed underneath us: its card, its persona, its
+      // messages (a reattribution renames them) may all have moved. This is
+      // the non-switching path — nothing is stopped and nothing is flushed.
+      await syncActiveChat(chatId)
+      await chatMirror.refresh()
+    })().catch(error => {
+      spindle.log.warn(`[DnD] refreshing the open chat failed: ${(error as Error).message}`)
+    })
+  }))
   /*
    * Forking is the host's gesture; carrying the campaign is ours.
    *
@@ -1917,9 +2034,13 @@ async function boot(): Promise<void> {
     setActiveUser(userId)
     const payload = raw as { sourceChatId?: string; forkedChatId?: string }
     if (!payload?.sourceChatId || !payload?.forkedChatId) return
+    const forked = payload.forkedChatId
+    // Before the first await: the switch into the fork can arrive at any point
+    // from here on, and has to find the fork already marked.
+    branchesBeingSeeded.add(forked)
     void (async () => {
       const { carryCampaignToFork } = await import('./tracker/branching')
-      const result = await carryCampaignToFork(payload.sourceChatId!, payload.forkedChatId!)
+      const result = await carryCampaignToFork(payload.sourceChatId!, forked)
       if (!result.ok) {
         // Not always a problem — a chat with no campaign has nothing to carry.
         spindle.log.info(`[DnD] fork not carried: ${result.reason ?? 'unknown'}`)
@@ -1936,6 +2057,24 @@ async function boot(): Promise<void> {
       }, userId)
     })().catch(error => {
       spindle.log.error(`[DnD] carrying the campaign failed: ${(error as Error).message}`)
+    }).finally(async () => {
+      branchesBeingSeeded.delete(forked)
+      // If the user is already in the fork, it was spared the new-chat reset
+      // while the carry ran. Now project what it should hold: the carried
+      // campaign, or — when there was nothing to carry — a clean one.
+      if (chatMirror.getChatId() !== forked) return
+      try {
+        const settings = await currentSettings()
+        const carried = !!(settings.chatStates as Record<string, unknown> | undefined)?.[forked]
+        if (carried) await loadChatState(forked)
+        else await projectUnseenChat(forked, false)
+        const { loadCompanionFor } = await import('./tracker/companion')
+        await loadCompanionFor(forked)
+        await saveSettings()
+        await renderPanel(userId)
+      } catch (error) {
+        spindle.log.warn(`[DnD] projecting the fork failed: ${(error as Error).message}`)
+      }
     })
   }))
 

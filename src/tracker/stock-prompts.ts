@@ -81,3 +81,63 @@ export async function rebuildModuleInstructions(): Promise<void> {
   const bits = await engine()
   bits.rebuildAllModuleInstructions(bits.getSettings())
 }
+
+/**
+ * Carry a clock-format change into everything that was written in the old one.
+ *
+ * `use24hTime` and `useDdMmYyFormat` are not display preferences: the stored
+ * Lorebook Agent templates and stock prompts carry worked timestamps — "08:00
+ * AM", "Day 3" — that teach the model which format to emit. Upstream funnels
+ * both toggles through setters in `index.js` (the file the port replaces) that
+ * rewrite those templates; the port's settings panel only flipped the flag. So
+ * the tracker expected one clock and every agent prompt still demonstrated the
+ * other — 13 AM/PM stamps and 16 "Day N" examples left behind on a fresh
+ * install.
+ *
+ * This is `setUse24hTime` / `setUseDdMmYyFormat` without their DOM half, in
+ * upstream's order. The caller saves afterwards, and the active chat's
+ * partition — where the format is also stored — is rewritten here, as
+ * upstream's `persistChatTimeFormatIfLinked()` does.
+ */
+export async function applyTimeFormatChange(
+  settings: Record<string, any>,
+  changed: { use24hTime?: boolean, useDdMmYyFormat?: boolean },
+): Promise<void> {
+  const bits = await engine()
+  const [memoProcessor, constants, routerUtils] = await Promise.all([
+    import('../engine/memo-processor.js'),
+    import('../engine/constants.js'),
+    import('../engine/src/state/router-utils.js'),
+  ]) as any[]
+
+  if (changed.useDdMmYyFormat) {
+    // Only the untouched defaults are swapped. A start date someone typed is
+    // theirs; upstream leaves it alone and so does this.
+    if (settings.useDdMmYyFormat) {
+      if (settings.initialDate === 'Day 1' || !settings.initialDate) settings.initialDate = '01/01/2026'
+    } else if (!settings.initialDate
+      || settings.initialDate === '01/01/2026' || settings.initialDate === '01/01/26') {
+      settings.initialDate = 'Day 1'
+    }
+  }
+  if (changed.use24hTime) {
+    const minutes = memoProcessor.parseInWorldTime(settings.initialTime || '08:00 AM')
+    if (minutes != null) {
+      settings.initialTime = constants.formatTimeOfDay(minutes, !!settings.use24hTime)
+    }
+  }
+
+  bits.rebuildAllModuleInstructions(settings)
+  routerUtils.adjustAllStoredTemplatesForTimeFormat(settings)
+
+  if (settings.chatLinkEnabled) {
+    const { chatMirror } = await import('../compat/chat-mirror')
+    const chatId = chatMirror.getChatId()
+    if (chatId) {
+      const persistence = await import('../engine/src/state/chat-persistence.js') as {
+        saveChatState: (id: string) => unknown
+      }
+      persistence.saveChatState(chatId)
+    }
+  }
+}

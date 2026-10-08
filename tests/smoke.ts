@@ -43,7 +43,8 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 }
 
 console.log('\n── checks ──')
-check('chat mirror attached', state.listeners.has('CHAT_CHANGED'))
+check('chat mirror attached to the switch event', state.listeners.has('CHAT_SWITCHED'))
+check('and listening for updates to the open chat', state.listeners.has('CHAT_CHANGED'))
 
 // Operator-scoped: nothing user-scoped may run until an event names a user.
 // Boot used to call chats.getActive() / world_books.list() / connections.list()
@@ -51,7 +52,7 @@ check('chat mirror attached', state.listeners.has('CHAT_CHANGED'))
 check('no user-scoped work before a user is known',
   state.userStorage.size === 0, `${state.userStorage.size} key(s) written`)
 
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 250))
 
 check('user resolved from the event',
@@ -118,7 +119,7 @@ if (state.interceptors.length) {
 
 // A chat switch must not throw.
 try {
-  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+  await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
   check('chat switch handled', true)
 } catch (error) {
   check('chat switch handled', false, (error as Error).message)

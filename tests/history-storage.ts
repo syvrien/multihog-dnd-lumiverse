@@ -43,7 +43,7 @@ await import('../src/backend')
 await wait(700)
 const { chatMirror } = await import('../src/compat/chat-mirror')
 const go = async (id: string): Promise<void> => {
-  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: id })
+  await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: id })
   for (let i = 0; i < 200 && chatMirror.getChatId() !== id; i++) await wait(5)
   await wait(300)
 }

@@ -31,7 +31,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 400): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 const editorLib = await import('../src/engine/map-editor-lib.js') as any

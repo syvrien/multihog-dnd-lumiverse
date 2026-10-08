@@ -36,7 +36,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const settle = (): Promise<unknown> => new Promise(resolve => setTimeout(resolve, 250))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await settle()
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {
@@ -267,7 +267,7 @@ state.generationQueue = [TOPOLOGY_2, ASSETS]
 let architectCalls = 0
 state.duringGeneration = async () => {
   if (++architectCalls !== 1) return
-  await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+  await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 }
 let switched = ''
 try {

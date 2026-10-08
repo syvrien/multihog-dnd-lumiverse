@@ -51,7 +51,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 400): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {
@@ -161,7 +161,7 @@ check('{{user}} is the persona, not the word “You”',
 
 console.log('\n── a chat with no card still works ──')
 state.chatCharacter.delete('chat-1')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 const bare = (globalThis as any).SillyTavern.getContext()
 check('the context is empty rather than broken',

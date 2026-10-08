@@ -90,8 +90,8 @@ async function build(): Promise<LoadChatState | null> {
 /**
  * Project the given chat's saved tracker state into the live settings.
  *
- * Returns false when the chat has no snapshot yet — a new chat, which keeps
- * whatever is live rather than blanking it.
+ * Returns false when the chat has no snapshot yet. The caller decides what a
+ * new chat starts from — see `resetUnseenChatState`.
  */
 export async function loadChatState(chatId: string | null): Promise<boolean> {
   if (!chatId) return false
@@ -121,5 +121,99 @@ export async function saveChatStateFor(chatId: string | null): Promise<void> {
     persistence.saveChatState?.(chatId)
   } catch (error) {
     spindle.log.warn(`[DnD] saving outgoing chat state failed: ${(error as Error).message}`)
+  }
+}
+
+/**
+ * Give a chat with no saved state a clean campaign, as upstream does.
+ *
+ * The port used to leave whatever was live in place — "a new chat keeps
+ * whatever is live rather than blanking it" — on the theory that blanking
+ * loses something. What it actually did was start every new campaign as a
+ * copy of the last one: the previous character sheet, its inventory, its quest
+ * log, its portraits, its relationships, its memo history. The first tracker
+ * pass of the new story then merged into all of that.
+ *
+ * Upstream calls `resetUnseenChatState()` here, from `index.js` — the file the
+ * port replaces — so this is that function without its DOM half, field for
+ * field. Its own note on scope stands: Narrator Configuration is deliberately
+ * left alone, because the departing chat was already snapshotted and a new
+ * chat should inherit how the user plays, not what they were playing.
+ *
+ * Two departures, both to keep the port's other fixes intact:
+ *   - the clock format goes back to the default through
+ *     `applyTimeFormatChange`, not by setting the flags alone, so the stored
+ *     prompts are rewritten with it rather than left in the old format;
+ *   - the companion is not touched here, because `loadCompanionFor` already
+ *     gives an unseen chat an empty conversation.
+ */
+export async function resetUnseenChatState(chatId: string): Promise<void> {
+  const [stateManager, immersion, chatSetup, relationshipMath, runtimeStateModule] =
+    await Promise.all([
+      import('../engine/state-manager.js'),
+      import('../engine/immersion.js'),
+      import('../engine/src/state/chat-setup.js'),
+      import('../engine/src/state/relationship-math.js'),
+      import('../engine/src/app/runtime-state.js'),
+    ]) as any[]
+  const s = stateManager.getSettings()
+
+  // Ownership first, as upstream: anything that saves in the meantime persists
+  // an identified new-chat state, never an ownerless one.
+  s.chatStateProjectionOwner = chatId
+
+  s.currentMemo = ''
+  s.combatDefeatedUi = []
+  s.prevMemo1 = ''
+  s.prevMemo2 = ''
+  s.memoHistory = []
+  s.dungeonMapHistory = []
+  s.lastDelta = ''
+  s.historyIndex = -1
+  s.quests = []
+  s.activeRouterKeys = []
+  s.activeWorldKeys = []
+  s.keywordActivatedKeys = []
+  s.routerLog = []
+  s.pcCharacterBlockSeeded = false
+  s.customPortraits = {}
+  s.customLocationImages = {}
+  s.worldProgressionLastFiredAtMinutes = -1
+  s.worldProgressionLastFiredPeriodLabel = ''
+  s.worldProgressionSkeletonAtmosphereSummary = ''
+  s.worldProgressionLocationLastAdvanced = {}
+  s.mapEvolutionLastFiredBySite = {}
+  s.mapEvolutionBacklogBySite = {}
+  s.mapEvolutionThreadsBySite = {}
+  s.dungeonMapRevealAll = false
+  s.mapEvolutionLastSiteRoot = ''
+  s.mapEvolutionPendingExitRoot = ''
+  s.mapEvolutionWorldReportApplications = {}
+  s.agentImmersionMode = false
+  immersion.resetImmersionSceneArtTracking?.()
+  s.npcRelationshipValues = {}
+  s.npcRelationshipLog = {}
+  if (runtimeStateModule.runtimeState) runtimeStateModule.runtimeState.historyViewIndex = -1
+  if (s.chatSetupLinkEnabled) chatSetup.clearChatBoundActivations(s)
+
+  // `applyChatNpcRelMaxSettings(null)`: the new chat starts on the default scale.
+  s.npcRelationshipMax = relationshipMath.getNpcRelationshipMaxDefault(s)
+
+  // `applyChatTimeFormatSettings(null)`: the default clock, with the stored
+  // prompts carried across if that is a change.
+  const changed = {
+    use24hTime: !!s.use24hTime,
+    useDdMmYyFormat: !!s.useDdMmYyFormat,
+  }
+  s.use24hTime = false
+  s.useDdMmYyFormat = false
+  s.initialDate = 'Day 1'
+  s.initialTime = '08:00 AM'
+  const { applyTimeFormatChange, rebuildModuleInstructions } = await import('../tracker/stock-prompts')
+  if (changed.use24hTime || changed.useDdMmYyFormat) {
+    await applyTimeFormatChange(s, changed)
+  } else {
+    // Both applyChat… helpers end by rebuilding the agent's NPC instruction.
+    await rebuildModuleInstructions()
   }
 }

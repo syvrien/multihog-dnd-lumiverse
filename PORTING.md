@@ -1847,7 +1847,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 112 files from
-`scripts/port.mjs` — across 34 test suites and 996 checks. (Against the earlier
+`scripts/port.mjs` — across 34 test suites and 1,015 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2052,3 +2052,78 @@ line per save in the worker log.
 Do **not** use `blockHistoryPersistence()` to switch it off. It reads like the
 off switch, and `saveChatState()` and `saveProfile()` both return early when it
 is set — it is an emergency brake on all saving.
+
+### Auditing the seam, after the re-port
+
+The re-port's fixes were the ones the tests caught. Tests catch what they
+exercise, so the seam was then audited directly, surface by surface:
+
+| surface | method | result |
+|---|---|---|
+| runtime actions | every `invoke('…')` in the bridge against what `installRuntimeActions` provides | 1 missing — `setUse24hTime`, unreachable itself, but it led to the first bug below |
+| `globalThis._rpg*` bridges | read by the engine, set by nothing in the port | 5 — four UI repaints, one only ever `delete`d |
+| `getContext()` members | used by the engine against `context.ts` | 2 unguarded; neither reachable (below) |
+| `fetch('/api/…')` | engine endpoints against the shim's routes | clean |
+| the chat-switch handler | upstream's `onChatChanged` read line by line against `syncActiveChat` | three steps never run — the last three bugs below |
+
+The first pass of the action audit matched names with `[A-Za-z]+`. That drops
+`setUse24hTime` from *both* lists and reports a clean match. Include digits.
+
+Five bugs came out of it, every one silent:
+
+**A clock-format change only flipped the flag.** Upstream routes both toggles
+through setters in `index.js` that also rewrite the stored agent templates and
+stock prompts, which carry worked timestamps teaching the model which format to
+write. From the port's panel, 13 AM/PM stamps and 16 "Day N" examples stayed
+behind, along with "08:00 AM" as the start time.
+`stock-prompts.ts:applyTimeFormatChange` is those setters without the DOM, and
+now matches upstream's own functions step for step. The format round trip is
+lossy (13 → 3 → 7 AM/PM stamps going on and off again). That is upstream's
+regex-based `adjustPromptTimestamps`, reproduced with no port code involved, so
+it is recorded here rather than patched.
+
+**Rebuilt prompts never reached storage.** `settings:patch` rebuilt derived
+prompt text *after* `saveSettings()`, which writes immediately. Storage got the
+toggle and not the text it implies: turn "Quest deadlines" off, restart, and the
+panel said off while the stored prompt still taught the DEADLINE rules. The
+rebuilds now run before the save. The existing test missed it because it read
+the live settings object, which was always right, and never what was saved.
+
+**A new chat started as a copy of the last campaign.** The port kept whatever
+was live on reaching a chat with no saved state, so every new campaign began
+with the previous character sheet, inventory, quest log, memo history and
+portraits, and its first tracker pass merged into all of it. Upstream resets in
+`resetUnseenChatState`, in `index.js`; `chat-state.ts` now has the port's copy,
+field for field. Its two exceptions are kept because both protect real data:
+**Chat Link off** (one shared campaign, chosen deliberately), and **the first
+chat attached at startup**, which adopts the live campaign through
+`shouldPreserveLiveChatStateOnBoot` when it has substance and no other owner.
+Forks get upstream's `isBranchSeedInProgress` treatment. The fork is marked
+synchronously on `CHAT_FORKED`, spared the reset while the carry runs, and
+projected once the carry is done.
+
+Per-chat portraits were not new: the loader and `saveChatState` have scoped them
+since before the re-port. A fresh chat inheriting them was this same bug.
+
+**A routine chat update read as switching to no chat.** In Lumiverse,
+`CHAT_SWITCHED` is the switch and `CHAT_CHANGED` is an *update* — a rename, a
+metadata write, an avatar switch — arriving as `{ chat, changedFields }` with no
+`chatId`. Both went through `syncActiveChat(payload.chatId ?? null)`, so a rename
+detached the chat and stopped every pass in flight; a tracker pass lost its
+turn. Every suite in this repo switched chats by emitting `CHAT_CHANGED` with a
+`chatId`, a payload the host never sends for a switch, and that is why nothing
+caught it. The suites now switch with `CHAT_SWITCHED`, as the host does, and
+`chat-scope.ts` sends the real update shape.
+
+**And two resets the switch skipped.** `resetRouterTick(true)` clears the
+run-every counters and the Lorebook Agent's pending keyword pool, which held
+keywords one story had triggered until the next story's agent ran.
+`resetCombatProfileOverride()` drops a combat connection override left on by a
+fight in the chat being left. Both now run on every switch, as upstream's do.
+
+**Two unguarded context calls, left alone because nothing reaches them.**
+`sendSystemMessage` only runs on the un-quiet dice path, which only a slash
+command reaches, and that command registers only when `SlashCommand` exists;
+here it does not. `getPresetManager()` runs only off the connection-profile
+path *and* with a `completionPresetId` set, which nothing in the port's settings
+can set. Wholesale-imported SillyTavern settings could reach the second.

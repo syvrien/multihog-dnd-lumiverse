@@ -34,7 +34,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 }
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 
 console.log('── world info REST shim ──')

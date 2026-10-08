@@ -55,7 +55,7 @@ await import('../src/backend')
 
 // Operator-scoped: user-scoped startup (chat sync, connection adoption) is
 // deferred until an event names a user. Nothing happens without this.
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {

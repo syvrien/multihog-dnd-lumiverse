@@ -35,7 +35,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 400): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {
@@ -130,6 +130,43 @@ check('forking in the host carries the campaign',
   'this is the path a real fork takes')
 check('and says so', state.toFrontend.some(m =>
   (m as any).type === 'toast' && /carried/i.test(String((m as any).message))))
+
+console.log('\n── switching into a fork while it is still being carried ──')
+/*
+ * Lumiverse emits CHAT_FORKED when the fork is made and the switch into it
+ * separately — and the carry is slow, cloning lorebooks. A chat with no saved
+ * state now starts as a clean campaign, so without a guard the switch would
+ * blank the fork first, and the carry would then refuse it as already having
+ * a campaign. This drives the real order: fork, then switch at once.
+ *
+ * In this fake the reset alone does not create a partition, so the outcome
+ * below would also hold without the guard; it pins the requirement — the fork
+ * ends up holding the source's campaign, and the source keeps its own — rather
+ * than the mechanism.
+ */
+state.messages.set('chat-4', [msg('m4', 'chat-4', 'We hold the gate.')])
+// This suite seeds chat-1's saved state directly while chat-1 is open, which
+// leaves the live projection empty — a state the product never reaches, since
+// the open chat is always loaded from what it saved. Leaving it would have the
+// switch below save that empty projection over chat-1, and blame the fork for
+// it. Load it, as opening the chat does.
+const { loadChatState } = await import('../src/compat/chat-state')
+await loadChatState('chat-1')
+const sourceMemo = String(settings.chatStates['chat-1']?.currentMemo ?? '')
+void emitHostEvent(state, 'CHAT_FORKED', {
+  sourceChatId: 'chat-1', forkedChatId: 'chat-4',
+  chat: { id: 'chat-4' }, branchId: 'b2',
+  forkedAtMessageId: 'm1', forkedAtMessageIndex: 0,
+})
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-4' })
+await wait(900)
+check('the fork ends up holding the campaign it was forked from',
+  sourceMemo.length > 0 && String(settings.currentMemo) === sourceMemo,
+  String(settings.currentMemo).slice(0, 30).replace(/\n/g, ' ') || '(blank)')
+check('and so does its saved state',
+  String(settings.chatStates['chat-4']?.currentMemo ?? '') === sourceMemo)
+check('while the source keeps its own',
+  String(settings.chatStates['chat-1']?.currentMemo ?? '') === sourceMemo)
 
 console.log('\n── copying a world ──')
 const copied = await cloneCampaign('sequel')

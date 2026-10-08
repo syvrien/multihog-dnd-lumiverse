@@ -62,7 +62,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 400): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {
@@ -114,7 +114,7 @@ await wait()
 check('the filter survives a chat switch',
   (settings.lorebookFilter ?? []).join() === 'Khelt Lore',
   JSON.stringify(settings.lorebookFilter))
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 check('and stays put afterwards',
   (settings.lorebookFilter ?? []).join() === 'Khelt Lore',
@@ -128,7 +128,7 @@ state.characterCards.set('card-1', {
 await emitFrontendMessage(state, {
   type: 'settings:patch', patch: { loreScope: 'card' },
 })
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 const none = await memo.buildLorebookContext()
 check('no lore is sent', none.length === 0, `${none.length} chars`)
@@ -151,13 +151,13 @@ state.messages.set('chat-2', [{
   name: 'You', content: 'x', send_date: 0, swipe_id: 0, swipes: ['x'],
   swipe_dates: [0], extra: {}, parent_message_id: null, branch_id: null, created_at: 0,
 }] as never)
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 check('the card’s own chat is scoped to the card’s book',
   (settings.lorebookFilter ?? []).join() === 'Khelt Lore',
   JSON.stringify(settings.lorebookFilter))
 // chat-2 was never given a card.
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await wait()
 const inherited = await memo.buildLorebookContext()
 check('the previous campaign’s lore does not follow it across',

@@ -38,7 +38,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 350): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {
@@ -123,7 +123,7 @@ check('and it stopped once the work was done',
   `${state.generationQueue.length} reply/replies unused`)
 
 console.log('\n── the conversation belongs to the chat ──')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await wait()
 check('a different chat starts empty',
   (await readCompanionHistory()).length === 0,
@@ -131,7 +131,7 @@ check('a different chat starts empty',
 
 state.generationResponse = 'Different campaign, different problem.'
 await askCompanion('Where am I?')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 const back = await readCompanionHistory()
 check('the first chat\'s conversation came back',
@@ -146,7 +146,7 @@ check('and the other chat\'s did not come with it',
 // it *after* `loadChatState()` had already swapped the arriving chat in. So
 // leaving chat 2 wrote chat 1's conversation into chat 2's slot and chat 2's
 // own was lost. Going one way and back only exercises the half that worked.
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-2' })
 await wait()
 const second = await readCompanionHistory()
 check('the second chat kept its own conversation',
@@ -154,7 +154,7 @@ check('the second chat kept its own conversation',
   second.map(entry => entry.content.slice(0, 24)).join(' | ') || '(empty)')
 check('and did not inherit the first chat\'s',
   !second.some(entry => /light a torch/i.test(entry.content)))
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 console.log('\n── clearing ──')

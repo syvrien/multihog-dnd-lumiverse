@@ -36,7 +36,7 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 350): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
-await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
 const { getSettings } = await import('../src/engine/state-manager.js') as {
@@ -194,6 +194,57 @@ await wait()
 check('a settings change rebuilds it without being asked',
   !/DEADLINE/.test(String(settings.stockPrompts?.quests ?? '')),
   'the toggle is an input to the prompt, not the prompt')
+
+/*
+ * …and the rebuilt text has to reach storage, not just memory.
+ *
+ * The check above reads the live settings object, which was always right. The
+ * rebuild ran *after* `saveSettings()`, which writes immediately, so storage
+ * got the new toggle and the old prompt: after a restart the panel said
+ * deadlines were off while the stored prompt still taught the DEADLINE rules.
+ * Nothing in this suite looked at disk, which is why it went unseen.
+ */
+const storedSettings = (): Record<string, any> => {
+  const key = [...state.userStorage.keys()].find(entry => entry.endsWith('settings.json'))
+  return key ? JSON.parse(state.userStorage.get(key)!).rpg_tracker ?? {} : {}
+}
+check('and the rebuilt prompt is what was saved, not only what is live',
+  storedSettings().syspromptModules?.questsDeadlines === false
+    && !/DEADLINE/.test(String(storedSettings().stockPrompts?.quests ?? '')),
+  /DEADLINE/.test(String(storedSettings().stockPrompts?.quests ?? ''))
+    ? 'disk still has the DEADLINE rules' : 'disk matches')
+
+console.log('\n── changing the clock format ──')
+/*
+ * `use24hTime` and `useDdMmYyFormat` are inputs to stored prompt text too: the
+ * agent templates and stock prompts carry worked timestamps that teach the
+ * model which format to write. Upstream's setters rewrite them; the port's
+ * panel only flipped the flag, leaving 13 AM/PM stamps and 16 "Day N" examples
+ * demonstrating a format the tracker had stopped expecting.
+ */
+const promptText = (from: Record<string, any>): string =>
+  String(from.routerSystemPromptTemplate ?? '') + JSON.stringify(from.stockPrompts ?? {})
+const ampm = (text: string): number => (text.match(/\d{1,2}:\d{2}\s?(AM|PM)/g) ?? []).length
+const dayN = (text: string): number => (text.match(/Day \d+/g) ?? []).length
+const before = ampm(promptText(settings))
+check('the shipped prompts start in 12-hour time', before > 3, `${before} AM/PM stamps`)
+
+await emitFrontendMessage(state, { type: 'settings:patch', patch: { use24hTime: true } })
+await wait()
+check('24-hour time rewrites the stored prompts',
+  ampm(promptText(settings)) < before, `${before} -> ${ampm(promptText(settings))} AM/PM stamps`)
+check('and the start time with them', !/AM|PM/.test(String(settings.initialTime)),
+  String(settings.initialTime))
+
+await emitFrontendMessage(state, { type: 'settings:patch', patch: { useDdMmYyFormat: true } })
+await wait()
+check('dd/mm dates leave no "Day N" examples behind', dayN(promptText(settings)) === 0,
+  `${dayN(promptText(settings))} left`)
+check('and move an untouched start date across', settings.initialDate === '01/01/2026',
+  String(settings.initialDate))
+check('and all of it reached storage',
+  dayN(promptText(storedSettings())) === 0 && storedSettings().initialDate === '01/01/2026',
+  `${dayN(promptText(storedSettings()))} "Day N" on disk`)
 
 console.log(`\n${failures === 0 ? 'modules test passed' : `${failures} check(s) failed`}`)
 process.exit(failures === 0 ? 0 : 1)
