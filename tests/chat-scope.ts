@@ -164,6 +164,46 @@ check('and no message reached the chat switched to',
   (state.messages.get('chat-2')?.length ?? 0) === before2,
   `${state.messages.get('chat-2')?.length ?? 0} vs ${before2}`)
 
+console.log('\n── the switch epoch upstream’s guards depend on ──')
+/*
+ * `pass-affinity.js` carries upstream's chat-ownership guards, and they turn on
+ * a module-level counter bumped by `invalidateChatCommitGuards()`. Upstream
+ * calls that from `index.js` — the one file this port replaces — so nothing
+ * would call it here, and every guard in the engine would stay valid forever.
+ * The failure mode is silent: the guards still *work*, they just never notice a
+ * switch, degrading to the plain id comparison their own docs warn about.
+ *
+ * `syncActiveChat` makes the call instead. This pins that down, because the
+ * engine files that consume these guards arrive on the next re-port and by then
+ * the omission would be invisible.
+ */
+const affinity = await import('../src/engine/src/state/pass-affinity.js') as {
+  createChatCommitGuard: (
+    chatId: string | null,
+    getCurrent: () => string | null,
+    opts?: Record<string, unknown>,
+  ) => () => boolean
+}
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await new Promise(resolve => setTimeout(resolve, 400))
+const { chatMirror } = await import('../src/compat/chat-mirror')
+const getCurrent = (): string | null => chatMirror.getChatId()
+const ownsChat = affinity.createChatCommitGuard('chat-1', getCurrent)
+check('a guard is valid where it was captured', ownsChat())
+
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-2' })
+await new Promise(resolve => setTimeout(resolve, 400))
+check('and invalid once the chat moves on', !ownsChat())
+
+// The reason the epoch exists at all: an id comparison says "still chat 1"
+// here, having missed that chat 1's state was swapped out and back underneath.
+await emitHostEvent(state, 'CHAT_CHANGED', { chatId: 'chat-1' })
+await new Promise(resolve => setTimeout(resolve, 400))
+check('still invalid after an A → B → A round trip', !ownsChat(),
+  'an id comparison would call this safe')
+check('while a guard captured now is good',
+  affinity.createChatCommitGuard('chat-1', getCurrent)())
+
 const errors = state.logs.filter(entry => entry.level === 'error')
 console.log('\n── errors ──')
 if (!errors.length) console.log('  (none)')

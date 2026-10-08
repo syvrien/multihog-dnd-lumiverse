@@ -109,6 +109,19 @@ async function syncActiveChat(chatId: string | null): Promise<void> {
     // outgoing chat before the incoming one overwrites it, or an uncommitted
     // edit is lost and the projection is left belonging to the wrong chat.
     await saveChatStateFor(previous)
+    /*
+     * Everything in flight from before this point no longer owns its chat.
+     *
+     * The epoch has to be bumped here — after the departing chat is flushed,
+     * before anything projects the arriving one. It is what makes an
+     * A → B → A round trip detectable: comparing chat ids alone says "still
+     * chat A" and misses that A's state was swapped out and back underneath
+     * the operation. Upstream's `docs/chat-ownership.md` is explicit about it.
+     */
+    const { invalidateChatCommitGuards } = await import(
+      './engine/src/state/pass-affinity.js'
+    ) as { invalidateChatCommitGuards: () => void }
+    invalidateChatCommitGuards()
   }
 
   setActiveChat(chatId)

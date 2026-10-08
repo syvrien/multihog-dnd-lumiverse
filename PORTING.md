@@ -1711,6 +1711,64 @@ the timing rather than the requirement. A roll that finished before the user
 moved is a good roll. What must never happen is anything reaching the chat they
 moved to, and that is what it checks now.
 
+### Upstream reached the same diagnosis, with a better mechanism
+
+Checked in October against upstream's `main`, 75 commits past this port's base
+(`de2d97b`, 2026-09-06; upstream is now 2026.9.25). Upstream spent September on
+this exact bug class and arrived at the same word for the fix:
+
+```
+8036044  Fix Map Evolution loading World Reports from a stale ctx.chatId
+f6acdff  Fix Scene View loading another campaign's Locations via stale ctx.chatId
+466ca51  Fix auto-gen loading another campaign's lorebook via stale ctx.chatId
+0756821  pin dungeon map capture to its originating chat
+c09b11c  pin Map Evolution world reports to the tracked chat
+e3a8d10  Guard Companion cancellation and request lifetime across chat switches
+```
+
+Plus roughly 1,550 lines of new tests named for it (`chat-operation-races`,
+`character-creation-races`, `autogen-chat-affinity`,
+`world-progression-affinity`, `lorebook-agent-races`, `panel-import-affinity`)
+and a design note, `docs/chat-ownership.md`.
+
+Their mechanism is stronger than the id comparison used above, and the doc says
+why in one line: **"Comparing chat IDs alone misses an A → B → A round trip."**
+`pass-affinity.js` grew a switch *epoch* — `createChatCommitGuard` captures the
+counter, `invalidateChatCommitGuards()` bumps it on a real switch, and a guard
+captured before a round trip stays invalid even though the chat id matches
+again.
+
+### The call upstream makes from the one file this port replaces
+
+`invalidateChatCommitGuards()` is called from **`index.js`** — which is the file
+the port *is*. Eleven engine files the port does generate consume the guards
+(`character-creator`, `map-architect`, `map-evolution`, `map-updater`,
+`narrative-hooks`, `portraits`, `router`, `immersion`, `game-cartridges`,
+`memo-recovery`, `map-evolution-debug`), so a re-port brings the guards across
+and leaves the thing that arms them behind.
+
+The failure would be silent in the worst way: the guards still run, still return
+`true`/`false`, and simply never notice a switch — every one of them quietly
+degraded to the comparison upstream wrote the doc to warn against.
+
+So `syncActiveChat` makes the call, after the departing chat is flushed and
+before anything projects the arriving one. `pass-affinity.js` itself is updated
+to upstream's current version; it imports nothing, so `scripts/port.mjs`
+reproduces it byte-for-byte and this is not a hand edit that will drift.
+
+**It is inert today** — no engine file in this port uses the new guards yet —
+and deliberately so: it is wired now because by the time the consumers arrive
+the omission is invisible. `tests/chat-scope.ts` pins it down, and removing the
+call fails exactly one check: the A → B → A one.
+
+**The port's own guards were measured, not assumed.** An A → B → A round trip
+driven through the middle of an Instant Action roll lands correctly as things
+stand — the card and the opening both reach the chat that asked, and the other
+campaign's memo is untouched — because those sites re-read or carry an explicit
+target rather than holding a stale reference to the live projection. So they
+keep the id comparison; converting them would have added refusals without
+removing a defect.
+
 ---
 
 ## What a turn actually costs
