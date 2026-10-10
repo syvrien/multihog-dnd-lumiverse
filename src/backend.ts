@@ -231,6 +231,15 @@ async function runPostTurn(generationType?: string): Promise<void> {
     }
   })
   await renderPanel()
+  // The Lorebook Agent may have filed something this turn. An open Records
+  // tab read once, when it was built or reopened, and never again — so what
+  // the agent wrote stayed invisible until the user went looking.
+  try {
+    const { readCampaignRecords } = await import('./tracker/records')
+    send({ type: 'records:state', ...(await readCampaignRecords()) })
+  } catch (error) {
+    spindle.log.warn(`[DnD] refreshing the records failed: ${(error as Error).message}`)
+  }
 }
 
 /** A turn finished in a chat the user has left: keep it for their return. */

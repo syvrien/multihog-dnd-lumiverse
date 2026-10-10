@@ -596,6 +596,20 @@ if (!recEntry) {
     !(full?.innerHTML ?? '').includes('<b>The Ash</b>'))
 }
 
+console.log('\n── an empty Records tab ──')
+const emptyRecords = (agent: Record<string, unknown>): void => drive('records:state', {
+  type: 'records:state', ok: true, prefix: 'chat_1', totalTokens: 0, player: null, agent,
+  groups: [{ id: 'npc', label: 'People', count: 0, tokens: 0, active: 0, entries: [] }],
+})
+emptyRecords({ enabled: true, runEvery: 3, repliesUntilNext: 2 })
+check('says when the Lorebook Agent files next',
+  /every 3 replies.*in 2 replies/.test(doc.querySelector('.dnd-rec__empty')?.textContent ?? ''),
+  doc.querySelector('.dnd-rec__empty')?.textContent ?? '')
+emptyRecords({ enabled: false, runEvery: 3, repliesUntilNext: 2 })
+check('and says when it is off',
+  /is off/.test(doc.querySelector('.dnd-rec__empty')?.textContent ?? ''),
+  doc.querySelector('.dnd-rec__empty')?.textContent ?? '')
+
 console.log('\n── the game system wizard ──')
 drive('wizard:examples', {
   type: 'wizard:examples',

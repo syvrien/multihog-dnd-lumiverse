@@ -86,9 +86,22 @@ export interface PlayerCard {
   portrait: string
 }
 
+/**
+ * When the Lorebook Agent files next. It runs every few replies (3 by
+ * default), so a short session can have NPCs on the tracker card and nothing in
+ * the books yet — which, unexplained, reads as broken rather than "not yet".
+ */
+export interface AgentSchedule {
+  enabled: boolean
+  runEvery: number
+  /** Replies until the next run, counting the one that triggers it. */
+  repliesUntilNext: number | null
+}
+
 export interface CampaignRecords {
   ok: boolean
   reason?: string
+  agent?: AgentSchedule
   /** The books this campaign owns, derived from the chat unless overridden. */
   prefix: string
   groups: RecordGroup[]
@@ -178,6 +191,7 @@ export async function readCampaignRecords(): Promise<CampaignRecords> {
 
   return {
     ok: true,
+    agent: await agentSchedule(settings),
     prefix: String(settings.routerCampaignPrefixOverride || chatId || ''),
     groups,
     totalTokens,
@@ -190,6 +204,23 @@ export async function readCampaignRecords(): Promise<CampaignRecords> {
         }
       : null,
   }
+}
+
+async function agentSchedule(settings: Record<string, any>): Promise<AgentSchedule> {
+  const runEvery = Math.max(1, Number(settings.routerRunEvery) || 1)
+  const enabled = settings.routerEnabled !== false
+  let repliesUntilNext: number | null = null
+  try {
+    const hooks = await import('../engine/narrative-hooks.js') as {
+      getRouterSchedulerInternals?: () => { routerAutoTick?: number }
+    }
+    const tick = Number(hooks.getRouterSchedulerInternals?.().routerAutoTick)
+    // The reply that brings the count to `runEvery` is the one that runs it.
+    if (Number.isFinite(tick)) repliesUntilNext = Math.max(1, runEvery - tick)
+  } catch {
+    // The schedule is a courtesy; the records are what matter.
+  }
+  return { enabled, runEvery, repliesUntilNext }
 }
 
 /** The full text of one entry, for reading or checking. */

@@ -1853,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 41 test suites and 1,141 checks. (Against the earlier
+`scripts/port.mjs` — across 42 test suites and 1,151 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2351,3 +2351,20 @@ to go back to the chat they were already in.
   chat. With none open, it attaches to the reply's chat as it used to.
 
 `view-chat.ts` reproduces the report; `frontend.ts` covers the tab's side.
+
+### Records said "Nothing recorded yet" with NPCs in the chat
+
+This was reported from a second device. Three causes contributed:
+
+- **The wrong chat.** Records asked a backend that held whatever chat it had
+  last heard of: none, after a stray account-wide "no chat", or the other
+  device's chat. With no chat the campaign prefix is empty, so the list was
+  too. With the other device's chat, it was that campaign's list. The
+  `viewChatId` fix above covers this; `records-view.ts` pins it for Records.
+- **Never refreshed.** An open Records tab read once, when it was built or
+  reopened. Whatever the Lorebook Agent filed after that stayed invisible. The
+  records are now pushed after every turn's post-generation passes.
+- **"Not yet" read as "broken".** The agent files every few replies (3 by
+  default), so a short session can show NPCs on the tracker card with nothing
+  in the books. The empty state now says how often the agent runs and when it
+  runs next, or that it is off.

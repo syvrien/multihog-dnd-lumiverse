@@ -83,6 +83,26 @@ export interface RecordsHandle {
   dispose(): void
 }
 
+/**
+ * What an empty Records tab says. The agent files every few replies, so
+ * "nothing yet" after a short session is usually just "not yet" — say which.
+ */
+function emptyMessage(agent: State['agent']): string {
+  if (agent && !agent.enabled) {
+    return 'Nothing recorded — the Lorebook Agent is off, so nobody is filing people, '
+      + 'places or events. Turn it on under Lorebook Agent in the settings.'
+  }
+  const every = agent?.runEvery ?? 0
+  const next = agent?.repliesUntilNext
+  if (every > 1) {
+    const when = typeof next === 'number'
+      ? ` The next run is ${next === 1 ? 'after the next reply' : `in ${next} replies`}.`
+      : ''
+    return `Nothing recorded yet. The Lorebook Agent files people, places and events every ${every} replies.${when}`
+  }
+  return 'Nothing recorded yet. The Lorebook Agent files people, places and events as you play.'
+}
+
 export function installRecords(
   ctx: SpindleFrontendContext,
   send: (message: ToBackend) => void,
@@ -191,8 +211,7 @@ export function installRecords(
       const anything = state.groups.some(group => group.count > 0)
       if (!anything) {
         const empty = ctx.dom.createElement('div', { class: 'dnd-rec__empty' })
-        empty.textContent = 'Nothing recorded yet. The Lorebook Agent files people, '
-          + 'places and events as you play — check it is enabled in settings.'
+        empty.textContent = emptyMessage(state.agent)
         root.appendChild(empty)
         return
       }

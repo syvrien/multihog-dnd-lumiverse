@@ -393,6 +393,8 @@ export type ToFrontend =
       type: 'records:state'
       ok: boolean
       reason?: string
+      /** When the Lorebook Agent files next — for the empty state. */
+      agent?: { enabled: boolean; runEvery: number; repliesUntilNext: number | null }
       prefix: string
       totalTokens: number
       groups: Array<{
