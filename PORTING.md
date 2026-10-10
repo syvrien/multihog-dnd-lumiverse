@@ -1853,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 40 test suites and 1,129 checks. (Against the earlier
+`scripts/port.mjs` — across 41 test suites and 1,141 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2324,3 +2324,30 @@ The fake host now stores metadata the way the real one does (inside
 whatever was written, wherever it was written, so it could never show this
 going missing. `swipe-rollback.ts` covers it end to end: a tracked turn, a
 restart, a regenerate, and a swipe back.
+
+### "The tracker can't see the chat id"
+
+This was reported by a user: Update state answered "chat mirror is empty
+(chatId: none)" while a chat was plainly open.
+
+Lumiverse's `CHAT_SWITCHED` does not mean "this tab opened a chat". It means the
+account's `activeChatId` setting was written, by whichever tab or device wrote
+it last, and every chat view writes `null` when it closes. If a phone is left on
+the home screen, or a second tab closes its chat, the account says no chat is
+open while the PC in front of the user still shows one. The port keeps a single
+open chat and took that signal at its word.
+
+A related regression came from postponing background turns. A reply finishing
+while the account said "no chat" was postponed, with a toast telling the user
+to go back to the chat they were already in.
+
+- Each tab knows what it shows (`ctx.getActiveChat()`). Every frontend message
+  now carries it as `viewChatId`, and the backend switches to that chat before
+  handling the message. A tab showing no chat changes nothing.
+- When the account's active chat changes, the tab with focus re-asserts its own
+  chat, so the tracker follows the screen the user is looking at rather than
+  the last writer.
+- A finished reply is postponed only when the tracker holds a different real
+  chat. With none open, it attaches to the reply's chat as it used to.
+
+`view-chat.ts` reproduces the report; `frontend.ts` covers the tab's side.

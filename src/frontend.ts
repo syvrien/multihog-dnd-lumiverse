@@ -321,8 +321,17 @@ function buildPanel(ctx: SpindleFrontendContext, tab: SpindleDrawerTabHandle): P
   }
 }
 
+/** The chat this tab is showing — not the account's last-written one. */
+function viewedChat(ctx: SpindleFrontendContext): string | null {
+  try {
+    return ctx.getActiveChat?.().chatId ?? null
+  } catch {
+    return null
+  }
+}
+
 function send(ctx: SpindleFrontendContext, message: ToBackend): void {
-  ctx.sendToBackend(message)
+  ctx.sendToBackend({ ...message, viewChatId: viewedChat(ctx) })
 }
 
 /**
@@ -751,6 +760,15 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   })
 
   tab.onActivate(() => send(ctx, { type: 'panel:refresh' }))
+  // The account's active chat changed — maybe from another tab or device, and
+  // maybe to "none". The tab the user is actually in says what it shows, so the
+  // tracker follows the screen in front of them rather than the last writer.
+  const offSwitch = ctx.events.on('CHAT_SWITCHED', () => {
+    const focused = typeof document !== 'undefined' && typeof document.hasFocus === 'function'
+      ? document.hasFocus()
+      : true
+    if (focused && viewedChat(ctx)) send(ctx, { type: 'chat:viewing' })
+  })
   // Every initial request goes out here, after `onBackendMessage` above is
   // listening. A panel that asks while it is being constructed can have its
   // reply delivered before the handler exists, and the panel then sits empty
@@ -778,6 +796,7 @@ export function setup(ctx: SpindleFrontendContext): () => void {
 
   return () => {
     unsubscribe()
+    offSwitch()
     rollPicker?.close()
     rollReview?.close()
     portraitPicker?.close()

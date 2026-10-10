@@ -37,6 +37,9 @@ const stage = doc.createElement('div')
 doc.body.appendChild(stage)
 
 let backendHandler: ((payload: unknown) => void) | undefined
+/** The chat this fake tab shows, as `ctx.getActiveChat()` reports it. */
+let viewing: string | null = 'chat-on-screen'
+const eventHandlers = new Map<string, (payload: unknown) => void>()
 const tagHandlers = new Map<string, (payload: Record<string, unknown>) => void>()
 const messageBubbles = new Map<string, Element>()
 
@@ -105,7 +108,14 @@ const ctx = {
       }
     },
   },
-  events: { on() { return () => {} }, emit() {} },
+  events: {
+    on(event: string, handler: (payload: unknown) => void) {
+      eventHandlers.set(event, handler)
+      return () => { eventHandlers.delete(event) }
+    },
+    emit() {},
+  },
+  getActiveChat() { return { chatId: viewing, characterId: null } },
   messages: {
     registerTagInterceptor(
       options: { tagName: string },
@@ -915,6 +925,20 @@ check('a failed roll is reported in the panel',
   (doc.querySelector('.dnd-panel__result')?.textContent ?? '').includes('Nothing rolled'),
   doc.querySelector('.dnd-panel__result')?.textContent ?? '')
 
+console.log('\n── which chat this tab shows ──')
+check('every message says which chat the tab is showing',
+  sent.length > 0 && sent.every(m => m.viewChatId === 'chat-on-screen'),
+  sent.filter(m => m.viewChatId !== 'chat-on-screen').map(m => `${m.type}:${m.viewChatId}`).slice(0, 3).join(', '))
+const beforeSwitch = sent.length
+eventHandlers.get('CHAT_SWITCHED')?.({ chatId: null })
+check('when the account switches chats, the tab in use says what it shows',
+  sent.slice(beforeSwitch).some(m => m.type === 'chat:viewing' && m.viewChatId === 'chat-on-screen'),
+  sent.slice(beforeSwitch).map(m => m.type).join(', '))
+viewing = null
+const beforeIdle = sent.length
+eventHandlers.get('CHAT_SWITCHED')?.({ chatId: null })
+check('a tab showing no chat says nothing', sent.length === beforeIdle)
+
 console.log('\n── teardown ──')
 try {
   teardown?.()
@@ -923,6 +947,7 @@ try {
   check('teardown() did not throw', false, (error as Error).message)
 }
 check('drawer tab destroyed', calls.includes('tab.destroy'))
+check('and stops listening for chat switches', !eventHandlers.has('CHAT_SWITCHED'))
 
 console.log(`\n${failures === 0 ? 'frontend test passed' : `${failures} check(s) failed`}`)
 process.exit(failures === 0 ? 0 : 1)

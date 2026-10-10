@@ -468,8 +468,13 @@ export type ToFrontend =
     }
 
 /** Frontend -> backend. */
-export type ToBackend =
+/**
+ * Every frontend message also carries `viewChatId`: the chat the sending tab
+ * shows, from `ctx.getActiveChat()`. See `followViewedChat` in the backend.
+ */
+export type ToBackend = (
   | { type: 'panel:ready' }
+  | { type: 'chat:viewing' }
   | { type: 'panel:refresh' }
   | { type: 'settings:get' }
   | { type: 'settings:patch'; patch: Record<string, unknown> }
@@ -720,6 +725,7 @@ export type ToBackend =
   | { type: 'panel:toggle-fullview'; tag: string }
   /** A CYOA choice the user clicked in a narrator message. */
   | { type: 'cyoa:choose'; text: string; messageId: string }
+) & { viewChatId?: string | null }
 
 /** Mirrors SillyTavern's POPUP_TYPE so ported call sites keep their arguments. */
 export const POPUP_TYPE = {

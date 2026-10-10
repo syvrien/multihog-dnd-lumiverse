@@ -405,6 +405,28 @@ function openChat(): string | null {
   return requestedChat === undefined ? chatMirror.getChatId() : requestedChat
 }
 
+/**
+ * Follow the chat the panel's own tab is showing.
+ *
+ * CHAT_SWITCHED is the *account's* `activeChatId` setting, written by
+ * whichever tab or device wrote it last — and every chat view writes `null`
+ * when it closes. A phone left on the home screen, or a second tab closing its
+ * chat, told the tracker no chat was open while the PC in front of the user
+ * still showed one, and Update state answered "chatId: none". Each tab knows
+ * what it shows (`ctx.getActiveChat()`), and every frontend message now says.
+ *
+ * A tab showing no chat changes nothing: being elsewhere in the app is not a
+ * reason to drop the campaign. A popup's answer never waits on a switch — the
+ * question it answers may be holding one up.
+ */
+async function followViewedChat(payload: ToBackend): Promise<void> {
+  if (payload?.type === 'popup:result') return
+  const viewing = (payload as { viewChatId?: unknown }).viewChatId
+  if (typeof viewing !== 'string' || !viewing) return
+  if (viewing === openChat() || deletedChats.has(viewing)) return
+  await syncActiveChat(viewing)
+}
+
 /** Run once the queued switches have finished. */
 function afterQueuedSwitches(): Promise<unknown> {
   return chatQueue
@@ -812,6 +834,7 @@ async function handleFrontendMessage(payload: ToBackend, userId: string): Promis
   {
     setActiveUser(userId)
     setPopupUser(userId)
+    await followViewedChat(payload)
     switch (payload?.type) {
       case 'panel:ready':
       case 'panel:refresh':
@@ -2472,10 +2495,12 @@ async function boot(): Promise<void> {
       chatId?: string; messageId?: string; generationType?: string; error?: string; content?: string
     }
     if (stopped && !String(payload?.content ?? '').trim()) return
-    // Where the user is, counting a switch already asked for. Unknown only
-    // before the first chat is attached, when following the event is right.
+    // Where the user is, counting a switch already asked for. Postponed only
+    // when that is another chat: with none open — before the first attach, or
+    // after an account-wide "no chat" from some other tab — following the
+    // event takes nobody's campaign away from them.
     const here = openChat()
-    if (payload?.chatId && requestedChat !== undefined && payload.chatId !== here) {
+    if (payload?.chatId && here && payload.chatId !== here) {
       postponeTurn(payload, userId)
       return
     }
