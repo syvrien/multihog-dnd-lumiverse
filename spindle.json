@@ -2,7 +2,7 @@
   "version": "0.1.0",
   "name": "Multihog D&D Framework",
   "identifier": "multihog_dnd",
-  "author": "Disgusting Fatbody (original), Lumiverse port",
+  "author": "Multihog (original), Lumiverse port",
   "github": "https://github.com/syvrien/multihog-dnd-lumiverse",
   "homepage": "https://github.com/syvrien/multihog-dnd-lumiverse",
   "description": "RPG state tracker, hybrid RNG, lorebook agent, world progression and map evolution. Ported from the SillyTavern extension.",
