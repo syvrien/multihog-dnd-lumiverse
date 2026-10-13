@@ -939,6 +939,18 @@ check('a failed roll is reported in the panel',
   (doc.querySelector('.dnd-panel__result')?.textContent ?? '').includes('Nothing rolled'),
   doc.querySelector('.dnd-panel__result')?.textContent ?? '')
 
+console.log('\n── story so far ──')
+const storyBox = (): HTMLElement | null => doc.querySelector('.dnd-panel__story')
+check('hidden while the chat has no Loom summary', storyBox()?.hidden === true)
+drive('story:state', { type: 'story:state', chatId: 'chat-1', summary: 'The hero escaped the Baron\u2019s keep.' })
+check('shows Loom\u2019s summary once there is one',
+  storyBox()?.hidden === false && /escaped the Baron/.test(storyBox()?.textContent ?? ''),
+  storyBox()?.textContent ?? '')
+check('collapsed, so it does not push the tracker down',
+  storyBox()?.tagName === 'DETAILS' && !(storyBox() as HTMLDetailsElement | null)?.open)
+drive('story:state', { type: 'story:state', chatId: 'chat-2', summary: '' })
+check('and hides again for a chat without one', storyBox()?.hidden === true)
+
 console.log('\n── which chat this tab shows ──')
 check('every message says which chat the tab is showing',
   sent.length > 0 && sent.every(m => m.viewChatId === 'chat-on-screen'),

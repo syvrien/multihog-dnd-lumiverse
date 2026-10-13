@@ -181,6 +181,34 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
         ],
       },
       {
+        // Lumiverse's own summarizer. See `tracker/loom.ts`.
+        title: 'Loom summary',
+        description: 'Lumiverse\u2019s Loom keeps a running summary of the chat. Paired '
+          + 'with Lumiverse\u2019s Message Limit, it keeps long campaigns in a context '
+          + 'window the model handles well. Turn Loom on in Lumiverse\u2019s own settings.',
+        fields: [
+          {
+            key: 'loomSummaryMode', kind: 'select', fallback: 'auto',
+            label: 'Give the narrator the summary',
+            help: 'Only when older messages are cut: when the Message Limit or the '
+              + 'context size has dropped the start of the chat, the summary stands '
+              + 'in for it. Never needed if your preset already uses {{loomSummary}} '
+              + '\u2014 it is not added twice.',
+            options: [
+              { value: 'auto', label: 'Only when older messages are cut' },
+              { value: 'always', label: 'Always' },
+              { value: 'off', label: 'Never' },
+            ],
+          },
+          {
+            key: 'loomSummaryForPasses', kind: 'toggle', fallback: true,
+            label: 'Give it to the Lorebook Agent, World Progression and Companion',
+            help: 'They read only a few recent messages; the summary tells them what '
+              + 'came before. Adds the summary\u2019s length to each of their calls.',
+          },
+        ],
+      },
+      {
         title: 'Developer',
         fields: [
           {

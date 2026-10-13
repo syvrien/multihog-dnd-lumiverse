@@ -388,6 +388,8 @@ export type ToFrontend =
     }
   /** The result of one terminal instruction. */
   | { type: 'terminal:result'; target: string; ok: boolean; output: string }
+  /** The open chat's Loom summary, for the panel's "Story so far". */
+  | { type: 'story:state'; chatId: string | null; summary: string }
   /** What the Lorebook Agent has filed for this campaign. */
   | {
       type: 'records:state'

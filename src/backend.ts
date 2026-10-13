@@ -297,6 +297,17 @@ async function runPendingTurn(chatId: string): Promise<void> {
   }
 }
 
+/** Send the open chat's Loom summary to the panel's "Story so far". */
+async function syncStory(userId?: string): Promise<void> {
+  try {
+    const { getLoomSummary } = await import('./tracker/loom')
+    const chatId = chatMirror.getChatId()
+    send({ type: 'story:state', chatId, summary: await getLoomSummary(chatId) }, userId)
+  } catch (error) {
+    spindle.log.warn(`[DnD] reading the story so far failed: ${(error as Error).message}`)
+  }
+}
+
 /**
  * Run upstream's automatic art — a check for newcomers, or with `force`, a
  * pass over everyone the switched-on options cover. Off by default, and a
@@ -659,6 +670,15 @@ function adaptInterceptor(handler: TrackerInterceptor) {
     const ruleset = await narratorSysprompt()
     if (ruleset) out.unshift({ role: 'system', content: ruleset })
 
+    // Lumiverse's Loom summary, when older messages have been cut and the
+    // preset does not already include it. See `tracker/loom.ts`.
+    try {
+      const { withStorySoFar } = await import('./tracker/loom')
+      out = await withStorySoFar(messages, out, chatMirror.getChatId(), chatMirror.messages, await currentSettings())
+    } catch (error) {
+      spindle.log.warn(`[DnD] adding the Loom summary failed: ${(error as Error).message}`)
+    }
+
     return out
   }
 }
@@ -689,6 +709,7 @@ async function narratorSysprompt(): Promise<string> {
  * host sanitises it before insertion.
  */
 async function renderPanelNow(userId?: string): Promise<void> {
+  void syncStory(userId)
   try {
     const settings = await currentSettings()
     const memo = String(settings.currentMemo ?? '')
@@ -2332,8 +2353,15 @@ async function boot(): Promise<void> {
   }))
   teardowns.push(spindle.on('CHAT_CHANGED', (raw: unknown, userId?: string) => {
     setActiveUser(userId)
-    const payload = raw as { chatId?: string | null, chat?: { id?: string } | null }
+    const payload = raw as { chatId?: string | null, chat?: { id?: string, metadata?: unknown } | null }
     const chatId = payload?.chatId ?? payload?.chat?.id ?? null
+    // Loom saves its summary into the chat's metadata, and the update carries
+    // the chat — so a new summary is known the moment it is saved, for any chat.
+    if (chatId && payload?.chat?.metadata !== undefined) {
+      void import('./tracker/loom').then(({ noteChatMetadata }) => {
+        if (noteChatMetadata(chatId, payload.chat!.metadata) && chatId === openChat()) void syncStory(userId)
+      })
+    }
     // An update to a chat that is not open is none of the tracker's business,
     // and an update naming no chat is a refresh signal, never a switch.
     if (!chatId || chatId !== openChat()) return
@@ -2374,6 +2402,7 @@ async function boot(): Promise<void> {
     // flight, and must not save it on the way out.
     deletedChats.add(chatId)
     pendingTurns.delete(chatId)
+    void import('./tracker/loom').then(({ forgetLoomSummary }) => forgetLoomSummary(chatId))
     // If it was the open chat — or the one a queued switch is heading to —
     // there is no chat open now. Decided here, synchronously: the host may
     // already have asked for a switch elsewhere, and that one must win.
@@ -2393,6 +2422,21 @@ async function boot(): Promise<void> {
       }
     })().catch(error => {
       spindle.log.error(`[DnD] cleaning up a deleted chat failed: ${(error as Error).message}`)
+    })
+  }))
+
+  /*
+   * A Loom run finished. The summary is usually saved — and announced by
+   * CHAT_CHANGED — just after; dropping what is known means the next read asks
+   * the host either way, whichever arrives first.
+   */
+  teardowns.push(spindle.on('SUMMARIZATION_COMPLETED', (raw: unknown, userId?: string) => {
+    setActiveUser(userId)
+    const chatId = (raw as { chatId?: string } | null)?.chatId
+    if (!chatId) return
+    void import('./tracker/loom').then(({ forgetLoomSummary }) => {
+      forgetLoomSummary(chatId)
+      if (chatId === openChat()) void syncStory(userId)
     })
   }))
 

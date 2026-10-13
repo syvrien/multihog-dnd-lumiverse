@@ -96,6 +96,32 @@ The built backend bundle is also run through an install-time safety scan
 calls, `eval`/`Function`, base64-decoding `Buffer.from`) with no opt-out for
 most of those. This bundle has been checked clean against every one of them.
 
+## Long campaigns: pair it with Loom
+
+Models get worse as prompts grow, and a long campaign's chat history grows
+without bound. Lumiverse already has the pieces to cap it, and the extension
+fills in around them:
+
+1. In Lumiverse's settings, turn **Loom** on (automatic mode, every 10 messages
+   by default) and turn on the **Message Limit** (around 20–30 messages).
+2. That's it. When older messages are cut, the extension gives the narrator
+   Loom's summary of them automatically. If your preset already uses
+   `{{loomSummary}}` it is not added twice. The Lorebook Agent, World
+   Progression and the Companion get the summary too, and the tracker panel
+   shows it under **Story so far**. Settings → General → *Loom summary*.
+
+The tracker memo and the campaign lorebooks keep exact state, so cutting
+history does not cost the character sheet, the NPCs or the places, and the
+tracker and agents read the full chat regardless of the Message Limit.
+
+Loom summarizes replies as they are stored, which includes CYOA menus and
+hidden map blocks. Adding this to Loom's system prompt keeps them out of the
+summary:
+
+```
+Ignore <choices> blocks and any hidden or <div hidden> map data; summarise only what happened in the story.
+```
+
 ## Licence
 
 GPL-3.0-or-later, inherited from upstream — see [LICENSE](LICENSE).

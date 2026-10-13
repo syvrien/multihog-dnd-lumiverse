@@ -148,10 +148,20 @@ const PANEL_CSS = `
   color: var(--lumiverse-text, inherit);
   font: inherit;
 }
+.dnd-panel__story {
+  margin: 4px 0 8px; font-size: 12px; opacity: .9;
+}
+.dnd-panel__story > summary { cursor: pointer; font-weight: 600; }
+.dnd-panel__story-text {
+  white-space: pre-wrap; margin-top: 4px; max-height: 240px; overflow-y: auto;
+}
 `
 
 interface PanelRefs {
   body: HTMLElement
+  /** Lumiverse's Loom summary, collapsed; hidden when the chat has none. */
+  story: HTMLElement
+  storyText: HTMLElement
   status: HTMLElement
   result: HTMLElement
   /** Raw memo editor, hidden until opened. */
@@ -295,10 +305,17 @@ function buildPanel(ctx: SpindleFrontendContext, tab: SpindleDrawerTabHandle): P
 
   const body = ctx.dom.createElement('div', { class: 'dnd-panel__body rpg-tracker-panel' })
 
-  panel.append(toolbar, askRow, editorWrap, result, body)
+  const story = ctx.dom.createElement('details', { class: 'dnd-panel__story' })
+  story.hidden = true
+  const storyTitle = ctx.dom.createElement('summary')
+  storyTitle.textContent = 'Story so far (Loom)'
+  const storyText = ctx.dom.createElement('div', { class: 'dnd-panel__story-text' })
+  story.append(storyTitle, storyText)
+
+  panel.append(toolbar, askRow, editorWrap, result, story, body)
   tab.root.appendChild(panel)
   return {
-    body, status, result, editor, editorWrap, ask,
+    body, story, storyText, status, result, editor, editorWrap, ask,
     setHistory(entries) {
       historyTexts = entries.map(entry => entry.text)
       history.textContent = ''
@@ -503,6 +520,10 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   const unsubscribe = ctx.onBackendMessage((raw: unknown) => {
     const message = raw as ToFrontend
     switch (message?.type) {
+      case 'story:state':
+        refs.storyText.textContent = message.summary
+        refs.story.hidden = !message.summary
+        break
       case 'panel:render': {
         // Read the numbers that are on screen before they are thrown away.
         // Keyed on the chat, so a switch repaints without animating between

@@ -99,13 +99,25 @@ async function withModel(
   }
 }
 
+/**
+ * Give the passes that need the story so far Lumiverse's Loom summary — the
+ * Lorebook Agent, World Progression, the Companion. Every engine request comes
+ * through here, so this is the one place that sees them all; anything that is
+ * not one of those passes goes out untouched. See `tracker/loom.ts`.
+ */
+async function storyForPass(messages: LlmMessageDTO[]): Promise<LlmMessageDTO[]> {
+  const { withStoryForPass } = await import('../tracker/loom')
+  return withStoryForPass(messages as never) as unknown as LlmMessageDTO[]
+}
+
 /** ST's `generateRaw({ prompt, systemPrompt, ... })`. */
 export async function generateRaw(options: GenerateRawOptions | string): Promise<string> {
   ensurePermission()
   const opts: GenerateRawOptions = typeof options === 'string' ? { prompt: options } : options
-  const messages: LlmMessageDTO[] = []
+  let messages: LlmMessageDTO[] = []
   if (opts.systemPrompt) messages.push({ role: 'system', content: opts.systemPrompt })
   if (opts.prompt) messages.push({ role: 'user', content: opts.prompt })
+  messages = await storyForPass(messages)
 
   const request = await withModel({
     type: 'raw',
@@ -149,7 +161,7 @@ export const ConnectionManagerRequestService = {
     const request = await withModel({
       type: 'raw',
       userId: userScope(),
-      messages,
+      messages: await storyForPass(messages),
       ...(Object.keys(parameters).length ? { parameters } : {}),
       ...(options.signal ? { signal: options.signal as AbortSignal } : {}),
     }, profileId)

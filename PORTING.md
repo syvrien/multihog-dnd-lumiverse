@@ -1853,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 42 test suites and 1,151 checks. (Against the earlier
+`scripts/port.mjs` — across 43 test suites and 1,180 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2368,3 +2368,39 @@ This was reported from a second device. Three causes contributed:
   default), so a short session can show NPCs on the tracker card with nothing
   in the books. The empty state now says how often the agent runs and when it
   runs next, or that it is off.
+
+### Loom, Lumiverse's summarizer
+
+Upstream calls a summarizer mandatory. It keeps the story's arc, while the
+tracker and the Lorebook Agent keep precise state. Lumiverse's Loom keeps a
+running summary in the chat's metadata (`loom_summary`), and its Message Limit
+caps how much history the narrator gets. The port used neither. Now
+`tracker/loom.ts` puts the summary where the campaign can use it:
+
+- **The narrator**, without editing the preset. The summary is added only when
+  older messages have actually been cut: judged by whether any of the chat's
+  first few messages made it into the assembled prompt. It is never added when
+  the prompt already contains it, for example via `{{loomSummary}}`. It goes
+  just after the leading system messages, so it reads as "previously".
+- **The Lorebook Agent, World Progression and the Companion.** Every engine
+  request passes through `compat/llm.ts`, which recognises these three by their
+  prompt headings and places the summary right before their recent-narrative
+  section. `tests/loom.ts` fails if a re-port renames a heading.
+- **The panel**, under "Story so far".
+
+The State Tracker does not get it. It tracks the latest turn, and an arc would
+invite it to re-apply events already in the memo. This mattered in practice.
+The tracker's prompt uses the same `## NARRATIVE HISTORY (…)` heading as the
+Companion's, so a loose anchor would have handed it the summary. The anchor
+matches only the Companion's own scopes, and the test runs the real tracker
+and "ask" prompts to prove they go out untouched.
+
+The summary is cached per chat and kept current from host events. Loom saves
+into chat metadata, and `CHAT_CHANGED` carries the updated chat. As a fallback,
+`SUMMARIZATION_COMPLETED` drops the cached copy. Summary runs fire their own
+events and skip interceptors, so they are never mistaken for story turns.
+
+An extension cannot change what Loom reads or how Loom and the Message Limit
+are configured. The README gives the recommended setup, and a Loom
+prompt-override line that keeps CYOA menus and hidden map blocks out of the
+summary.

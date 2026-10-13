@@ -65,6 +65,8 @@ export interface FakeState {
   activePersonaId: string | null
   /** Chats the user has deleted: `chats.get` answers null for them. */
   deletedChats: Set<string>
+  /** Chat metadata the host returns from `chats.get` — Loom's summary lives here. */
+  chatMetadata: Map<string, Record<string, unknown>>
   /** Character cards, keyed by id. */
   characterCards: Map<string, Record<string, any>>
   /** Which card each chat is played against. */
@@ -150,6 +152,7 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
     ],
     activePersonaId: null,
     deletedChats: new Set(),
+    chatMetadata: new Map(),
     images: new Map([['img-1', { id: 'img-1', url: '/api/v1/images/img-1' }]]),
     uploads: [],
     imageGenConnections: [],
@@ -289,7 +292,7 @@ export function installFakeSpindle(overrides: Partial<FakeState> = {}): FakeStat
           id: chatId,
           character_id: state.chatCharacter.get(chatId) ?? null,
           name: chatId,
-          metadata: {},
+          metadata: { ...(state.chatMetadata.get(chatId) ?? {}) },
         }
       },
       /**
