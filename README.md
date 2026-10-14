@@ -108,7 +108,7 @@ fills in around them:
    Loom's summary of them automatically. If your preset already uses
    `{{loomSummary}}` it is not added twice. The Lorebook Agent, World
    Progression and the Companion get the summary too, and the tracker panel
-   shows it under **Story so far**. Settings → General → *Loom summary*.
+   shows it under **Story so far**. The options are in the **D&D Settings** drawer tab (**D&D Cfg**) → *General & Visuals* → *Loom summary*.
 
 The tracker memo and the campaign lorebooks keep exact state, so cutting
 history does not cost the character sheet, the NPCs or the places, and the
