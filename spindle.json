@@ -6,7 +6,7 @@
   "github": "https://github.com/syvrien/multihog-dnd-lumiverse",
   "homepage": "https://github.com/syvrien/multihog-dnd-lumiverse",
   "description": "RPG state tracker, hybrid RNG, lorebook agent, world progression and map evolution. Ported from the SillyTavern extension.",
-  "dev_mode": true,
+  "dev_mode": false,
   "permissions": [
     "generation",
     "interceptor",

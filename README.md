@@ -91,6 +91,36 @@ against `package.json`, then builds whichever of `dist/backend.js` /
 skips building entirely; do that only if you want to pin an exact build rather
 than let the host produce one.
 
+### Updates
+
+Lumiverse checks installed extensions against GitHub every five minutes and
+shows an update notice when the installed commit differs from the remote one.
+Clicking **Update** fetches the branch, hard-resets the installed copy to it,
+runs `bun install`, rebuilds `dist/` and restarts the extension. Pushing a commit
+is all a release takes; nothing installs without the user clicking Update.
+
+That only works with `"dev_mode": false` in `spindle.json`, which is what the
+repo ships. With `dev_mode: true`, Lumiverse treats the copy as a developer's
+working tree: it never reports an update, and Update rebuilds without fetching.
+Copies installed while the repo still shipped `true` (before October 2026) are
+stuck in that mode and need one reinstall to start receiving updates.
+
+### Developing against a local Lumiverse
+
+If your Lumiverse loads the extension through a link to your working copy, which
+is the quickest way to test, then Update or Update All there would hard-reset
+your working copy to GitHub's branch. Keep `dev_mode: true` on your machine only,
+as a local edit git ignores:
+
+```bash
+git update-index --skip-worktree spindle.json
+```
+
+Then set `"dev_mode": true` in your local `spindle.json`. To change
+`spindle.json` for real later, undo it first with
+`git update-index --no-skip-worktree spindle.json`, commit with `dev_mode`
+back to `false`, then repeat the two steps above.
+
 The built backend bundle is also run through an install-time safety scan
 (filesystem/subprocess/socket/SQLite imports, dangerous `Bun.*`/`process.*`
 calls, `eval`/`Function`, base64-decoding `Buffer.from`) with no opt-out for
