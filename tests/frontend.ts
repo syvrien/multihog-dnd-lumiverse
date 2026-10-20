@@ -444,6 +444,39 @@ if (!mapSelect) {
     JSON.stringify(patch))
 }
 
+// The Lorebook Agent's connection has two pickers on the same setting: one
+// under Connections, one in the agent's own section. The form kept a single
+// control per setting, so a settings push updated only the second — and the
+// first, refilled from what it remembered, snapped back to the old choice
+// after every save. Reported as the agent's connection being "stuck".
+const agentPickers = [selectFor('Lorebook Agent'), selectFor('Agent connection')]
+const syncAgent = (id: string): void => drive('settings:sync', {
+  type: 'settings:sync',
+  settings: {
+    enabled: true, connectionProfileId: 'conn-1',
+    routerConnectionProfileId: id, routerConnectionSource: 'profile',
+  },
+  connections: [{ id: 'conn-1', name: 'nano' }, { id: 'conn-2', name: 'big' }],
+})
+if (agentPickers.some(picker => !picker)) {
+  check('found both Lorebook Agent connection pickers', false)
+} else {
+  const [underConnections, inAgentSection] = agentPickers as HTMLSelectElement[]
+  syncAgent('conn-1')
+  underConnections.value = 'conn-2'
+  underConnections.dispatchEvent(new window.Event('change', { bubbles: true }))
+  syncAgent('conn-2')
+  check('the agent picker under Connections keeps a new choice once the save comes back',
+    underConnections.value === 'conn-2', underConnections.value)
+  check('and the one in the agent\u2019s own section shows it too', inAgentSection.value === 'conn-2', inAgentSection.value)
+  inAgentSection.value = 'conn-1'
+  inAgentSection.dispatchEvent(new window.Event('change', { bubbles: true }))
+  syncAgent('conn-1')
+  check('changing it from the agent\u2019s section moves both',
+    underConnections.value === 'conn-1' && inAgentSection.value === 'conn-1',
+    `${underConnections.value} / ${inAgentSection.value}`)
+}
+
 console.log('\n── CYOA choices ──')
 const bubble = doc.createElement('div')
 messageBubbles.set('msg-1', bubble)

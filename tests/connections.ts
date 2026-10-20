@@ -132,6 +132,27 @@ check('but unpinned ones still follow',
   settings.mapRuntimeConnectionProfileId === 'conn-2',
   String(settings.mapRuntimeConnectionProfileId))
 
+console.log('\n── the Lorebook Agent ──')
+// Reported as the agent's connection being "stuck". The panel was at fault —
+// one of its two pickers snapped back — but the backend half is pinned here:
+// a pick sticks, and survives the tracker's connection changing after it.
+await emitFrontendMessage(state, {
+  type: 'settings:patch',
+  patch: { routerConnectionProfileId: 'conn-2', routerConnectionSource: 'profile' },
+})
+await wait()
+check('picking the agent\u2019s connection sets it',
+  settings.routerConnectionProfileId === 'conn-2' && settings.routerConnectionSource === 'profile',
+  `${settings.routerConnectionSource} / ${settings.routerConnectionProfileId}`)
+check('and stops it following the tracker', settings.routerConnectionFollows === false)
+await emitFrontendMessage(state, {
+  type: 'settings:patch',
+  patch: { connectionProfileId: 'conn-1', connectionSource: 'profile' },
+})
+await wait()
+check('so changing the tracker\u2019s connection leaves it alone',
+  settings.routerConnectionProfileId === 'conn-2', String(settings.routerConnectionProfileId))
+
 console.log('\n── a connection that no longer exists ──')
 // Silently sending with no model produced a provider 400 that named nothing.
 state.connections.splice(0, state.connections.length, SECOND_CONNECTION)

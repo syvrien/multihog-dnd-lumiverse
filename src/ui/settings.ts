@@ -270,8 +270,19 @@ export function installSettings(
   }
   search.addEventListener('input', applySearch)
 
-  /** Controls by setting key, so backend pushes can refresh them in place. */
-  const controls = new Map<string, (value: unknown) => void>()
+  /**
+   * Every control showing a setting, by key — a list, because one setting can
+   * have several. The Lorebook Agent's connection appears under Connections and
+   * in the agent's own section; with one control per key, a settings push
+   * updated only the last one registered, and the other snapped back to the
+   * old value after every save.
+   */
+  const controls = new Map<string, Array<(value: unknown) => void>>()
+  const addControl = (key: string, set: (value: unknown) => void): void => {
+    const list = controls.get(key)
+    if (list) list.push(set)
+    else controls.set(key, [set])
+  }
   /** The field each control came from, so refreshes keep the right fallback. */
   const fields = new Map<string, SettingField>()
   let connectionOptions: Array<{ id: string; name: string }> = []
@@ -317,7 +328,7 @@ export function installSettings(
         input.type = 'checkbox'
         input.checked = !!current
         input.addEventListener('change', () => patch(field.key, input.checked))
-        controls.set(field.key, value => { input.checked = !!value })
+        addControl(field.key, value => { input.checked = !!value })
         control.appendChild(input)
         break
       }
@@ -329,7 +340,7 @@ export function installSettings(
         if (field.step !== undefined) input.step = String(field.step)
         input.value = String(Number(current) || 0)
         input.addEventListener('change', () => patch(field.key, Number(input.value) || 0))
-        controls.set(field.key, value => { input.value = String(Number(value) || 0) })
+        addControl(field.key, value => { input.value = String(Number(value) || 0) })
         control.appendChild(input)
         break
       }
@@ -338,7 +349,7 @@ export function installSettings(
         input.type = 'text'
         input.value = String(current ?? '')
         input.addEventListener('change', () => patch(field.key, input.value))
-        controls.set(field.key, value => { input.value = String(value ?? '') })
+        addControl(field.key, value => { input.value = String(value ?? '') })
         row.appendChild(label)
         row.appendChild(input)
         return row
@@ -348,7 +359,7 @@ export function installSettings(
         input.rows = field.rows ?? 4
         input.value = String(current ?? '')
         input.addEventListener('change', () => patch(field.key, input.value))
-        controls.set(field.key, value => { input.value = String(value ?? '') })
+        addControl(field.key, value => { input.value = String(value ?? '') })
         row.appendChild(label)
         row.appendChild(input)
         return row
@@ -363,7 +374,7 @@ export function installSettings(
         }
         select.value = String(current ?? field.fallback)
         select.addEventListener('change', () => patch(field.key, select.value))
-        controls.set(field.key, value => { select.value = String(value ?? '') })
+        addControl(field.key, value => { select.value = String(value ?? '') })
         control.appendChild(select)
         break
       }
@@ -399,7 +410,7 @@ export function installSettings(
             },
           })
         })
-        controls.set(field.key, value => {
+        addControl(field.key, value => {
           select.dataset.selected = String(value ?? '')
           select.value = String(value ?? '')
         })
@@ -596,9 +607,9 @@ export function installSettings(
         return
       }
       // Refresh in place so a backend push does not blow away focus or scroll.
-      for (const [key, set] of controls) {
+      for (const [key, setters] of controls) {
         const field = fields.get(key)
-        if (field) set(valueFor(values, field))
+        if (field) for (const set of setters) set(valueFor(values, field))
       }
       fillConnections()
     },
