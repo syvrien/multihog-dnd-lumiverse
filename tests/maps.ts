@@ -15,7 +15,7 @@
  * SillyTavern's "main API", which does not exist here.
  */
 
-import { emitHostEvent, installFakeSpindle, invokeTool } from './fake-spindle'
+import { emitFrontendMessage, emitHostEvent, installFakeSpindle, invokeTool } from './fake-spindle'
 
 const state = installFakeSpindle()
 // Maps are saved into a Locations lorebook named from the campaign prefix,
@@ -46,9 +46,19 @@ const settings = getSettings()
 
 const { affectsMapRuntime, syncMapRuntime } = await import('../src/tracker/maps')
 
-console.log('── the tool is offered to the model ──')
+console.log('── off for a new install ──')
+// Opt-in since the port's defaults: about 1.7k tokens on every prompt plus
+// background passes, for a feature most campaigns never use.
+const before = await syncMapRuntime()
+check('persistent maps start off', !before.enabled && !state.tools.has('CreateAreaMap'), before.reason ?? '')
+await emitFrontendMessage(state, {
+  type: 'settings:patch', patch: { 'syspromptModules.dungeon_reality_and_hidden_mapping': true },
+})
+await settle()
+
+console.log('\n── the tool is offered to the model ──')
 const status = await syncMapRuntime()
-check('persistent maps are on by default', status.enabled, status.reason ?? '')
+check('switching them on enables them', status.enabled, status.reason ?? '')
 check('CreateAreaMap registered', status.toolRegistered, status.reason ?? '')
 check('the host actually has it', state.tools.has('CreateAreaMap'),
   [...state.tools.keys()].join(', '))

@@ -9,7 +9,9 @@
 
 import { installCompatGlobals } from './compat/install'
 import { flushBrowserEnv, hydrateBrowserEnv, installBrowserEnv } from './compat/browser-env'
-import { loadSettings, saveSettings, settingsLoaded } from './compat/settings-store'
+import {
+  freshInstall, loadSettings, saveSettings, settingsLoaded, settingsLoadFailed,
+} from './compat/settings-store'
 import { bridgeHostEvents, event_types, eventSource } from './compat/events'
 import { chatMirror } from './compat/chat-mirror'
 import { invalidateWorldInfoCache, updateWorldInfoList } from './compat/world-info'
@@ -55,6 +57,8 @@ type TrackerInterceptor = (
 const teardowns: Array<() => void> = []
 
 let userStateReady: Promise<void> | null = null
+/** The read-only warning has been shown for the current run of failed loads. */
+let settingsWarningShown = false
 
 /**
  * Load everything that belongs to the current user: their stored preferences
@@ -69,7 +73,33 @@ function ensureUserState(): Promise<void> {
   if (userStateReady) return userStateReady
   userStateReady = (async () => {
     await hydrateBrowserEnv()
-    await loadSettings()
+    try {
+      await loadSettings()
+    } catch (error) {
+      // Saving is suspended until a read succeeds; say so once, not on every
+      // entry point that retries.
+      if (settingsLoadFailed() && !settingsWarningShown) {
+        settingsWarningShown = true
+        send({
+          type: 'toast', level: 'warning',
+          message: 'DnD settings could not be loaded. Changes will not be saved until they can be read — '
+            + 'reload the page to try again.',
+        })
+      }
+      throw error
+    }
+    settingsWarningShown = false
+    // First run: start from the port's defaults where they differ from
+    // upstream's — persistent maps off, for one. Existing users keep theirs.
+    if (freshInstall()) {
+      const [{ applyPortDefaults }, stateManager] = await Promise.all([
+        import('./compat/port-defaults'),
+        import('./engine/state-manager.js') as Promise<{ getSettings: () => Record<string, unknown> }>,
+      ])
+      const applied = applyPortDefaults(stateManager.getSettings())
+      spindle.log.info(`[DnD] new install: applied port defaults (${applied.join(', ')})`)
+      await saveSettings()
+    }
     void eventSource.emit(event_types.SETTINGS_LOADED)
   })().catch(error => {
     // Let a later call retry rather than caching the failure forever.

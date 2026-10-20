@@ -24,24 +24,64 @@ export const extensionSettings: Record<string, unknown> = {}
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loaded = false
+let fresh = false
+/**
+ * The last read of the stored settings failed. `extensionSettings` then holds
+ * whatever the engine filled in from its defaults, and writing that back would
+ * replace the user's real settings — connections, campaign state, cartridges —
+ * with a blank install. Saving stays off until a read succeeds.
+ */
+let loadFailed = false
+let saveSuspendedLogged = false
+
+/**
+ * Whether the stored settings had no engine settings in them — a new install,
+ * or a user's first visit. Judged from what was *stored*, not from
+ * `extensionSettings`, which an early `getSettings()` may already have filled
+ * with defaults. See `port-defaults.ts`.
+ */
+export function freshInstall(): boolean {
+  return fresh
+}
 
 export function settingsLoaded(): boolean {
   return loaded
 }
 
+/** Whether the stored settings could not be read, so saving is suspended. */
+export function settingsLoadFailed(): boolean {
+  return loadFailed
+}
+
+/**
+ * Read the stored settings into `extensionSettings`.
+ *
+ * Throws if the read fails, and leaves the store unloaded so the next call
+ * tries again — a transient storage error must not stick for the session.
+ */
 export async function loadSettings(): Promise<void> {
   if (loaded) return
+  let stored: Record<string, unknown> | null
   try {
-    const stored = await spindle.userStorage.getJson<Record<string, unknown>>(SETTINGS_PATH, {
+    stored = await spindle.userStorage.getJson<Record<string, unknown>>(SETTINGS_PATH, {
       fallback: {},
       userId: userScope(),
     })
-    for (const [key, value] of Object.entries(stored ?? {})) {
-      extensionSettings[key] = value
-    }
   } catch (error) {
-    spindle.log.warn(`[DnD] settings load failed, starting empty: ${(error as Error).message}`)
+    // A failed read is not a new install — never apply first-run defaults over
+    // settings that exist but could not be read, and never save over them.
+    loadFailed = true
+    spindle.log.warn(`[DnD] settings load failed: ${(error as Error).message}`)
+    throw error
   }
+  for (const [key, value] of Object.entries(stored ?? {})) {
+    extensionSettings[key] = value
+  }
+  const { ENGINE_SETTINGS_KEY } = await import('./port-defaults')
+  fresh = !(stored && typeof stored === 'object' && ENGINE_SETTINGS_KEY in stored)
+  if (loadFailed) spindle.log.info('[DnD] settings read on retry; saving resumed')
+  loadFailed = false
+  saveSuspendedLogged = false
   loaded = true
 }
 
@@ -49,6 +89,14 @@ export async function saveSettings(): Promise<void> {
   if (saveTimer) {
     clearTimeout(saveTimer)
     saveTimer = null
+  }
+  if (loadFailed) {
+    if (!saveSuspendedLogged) {
+      saveSuspendedLogged = true
+      spindle.log.warn('[DnD] settings not saved: the stored settings could not be read, '
+        + 'and saving now would overwrite them. Saving is suspended until they load.')
+    }
+    return
   }
   try {
     await spindle.userStorage.setJson(SETTINGS_PATH, extensionSettings, {

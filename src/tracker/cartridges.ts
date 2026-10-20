@@ -72,8 +72,13 @@ async function engine(): Promise<EngineBits> {
 }
 
 /** The groups a payload divides into, flagged where they differ from stock. */
-function describeGroups(bits: EngineBits, payload: Record<string, unknown>): CartridgeGroup[] {
-  const factory = bits.factory()
+async function describeGroups(bits: EngineBits, payload: Record<string, unknown>): Promise<CartridgeGroup[]> {
+  // "Stock" is what a new install starts with: upstream's factory settings,
+  // plus the defaults the port changes. Otherwise every fresh install would
+  // read as modified. See `compat/port-defaults.ts`.
+  const factory = structuredClone(bits.factory())
+  const { applyPortDefaults } = await import('../compat/port-defaults')
+  applyPortDefaults(factory)
   return bits.groups.map(group => ({
     id: group.id,
     label: group.label,
@@ -108,7 +113,7 @@ export async function inspectCartridge(
     (entry: Record<string, any>) => String(entry.id) === String(id),
   )
   if (!found) return { ok: false, reason: 'that cartridge no longer exists' }
-  return { ok: true, groups: describeGroups(bits, found.payload ?? {}) }
+  return { ok: true, groups: await describeGroups(bits, found.payload ?? {}) }
 }
 
 export async function saveCurrentAsCartridge(
@@ -239,5 +244,5 @@ export async function importCartridge(
 /** What the *current* configuration would look like as a cartridge. */
 export async function describeCurrent(): Promise<CartridgeGroup[]> {
   const bits = await engine()
-  return describeGroups(bits, bits.build(bits.getSettings()))
+  return await describeGroups(bits, bits.build(bits.getSettings()))
 }

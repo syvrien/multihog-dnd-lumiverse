@@ -532,10 +532,12 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
         label: 'Party benching',
       },
       {
-        key: 'syspromptModules.dungeon_reality_and_hidden_mapping', kind: 'toggle', fallback: true,
+        // Off for new installs; see `compat/port-defaults.ts`.
+        key: 'syspromptModules.dungeon_reality_and_hidden_mapping', kind: 'toggle', fallback: false,
         label: 'Persistent maps',
         help: 'Lets the narrator map a dungeon, interior or settlement and keep it '
-          + 'consistent. Also the master switch for Persistent maps below.',
+          + 'consistent. Also the master switch for Persistent maps below. Off by '
+          + 'default: it adds about 1.7k tokens to every prompt, plus background passes.',
       },
     ],
     groups: [
@@ -570,8 +572,8 @@ export const SETTINGS_SCHEMA: SettingSection[] = [
     description: 'The narrator calls a tool to draw a map the first time the story '
       + 'enters somewhere worth mapping. After that, two background passes keep '
       + 'it current: the updater tracks where the party is and what they have '
-      + 'opened, and evolution moves the site\'s inhabitants on. Turned off by '
-      + '"Persistent maps" under Systems.',
+      + 'opened, and evolution moves the site\'s inhabitants on. Off by default — '
+      + 'turn it on with "Persistent maps" under Game Systems.',
     fields: [
       {
         key: 'mapArchitectMaxTokens', kind: 'number', fallback: 25000, min: 1000, max: 64000, step: 1000,

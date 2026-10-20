@@ -1853,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 44 test suites and 1,204 checks. (Against the earlier
+`scripts/port.mjs` — across 45 test suites and 1,211 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2437,3 +2437,29 @@ checked against Lumiverse's own scanner (`detectDangerousBackendCapabilities`
 at upstream `3ca135a2`): nothing blocked. `tests/backend-scan.ts` builds the
 backend the way the installer does, fails on any forbidden form, and checks
 `stFetch` still does the shim's job.
+
+### The port's own defaults: persistent maps start off
+
+Upstream ships persistent maps on. They cost about 1.7k tokens of ruleset on
+every narrator prompt, the largest single module, plus the Map Architect,
+updater and evolution passes, for a feature most campaigns never use.
+`compat/port-defaults.ts` lists engine defaults the port changes. For now that
+is only `syspromptModules.dungeon_reality_and_hidden_mapping` → `false`, the
+master switch for the whole map system.
+
+They apply **once, on a new install**: when the stored settings have no
+`rpg_tracker` key yet. That is judged from what was stored, because an early
+`getSettings()` can already have filled the live object with defaults.
+Existing installs keep what they have. A failed read is never mistaken for a
+new install.
+
+Game Cartridges' "stock" baseline includes the port's defaults, so an
+untouched new install does not read as modified. Ruleset modules are also kept
+per chat (upstream's "lock modules to each chat"), so a chat saved with maps on
+keeps them on.
+
+Three map suites had been relying on the old default. `message-events.ts` was
+enabling maps through a key that does not exist (`sectionEnabled`) and passed
+only because maps were already on. Each now switches maps on explicitly, and
+`tests/port-defaults.ts` covers a new install, an existing one, and an
+unreadable one, each in its own process.

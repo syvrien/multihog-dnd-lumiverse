@@ -139,7 +139,8 @@ settings.enabled = true
 const { LOCATION_MAPPING_SECTION_TAG } = await import('../src/engine/src/state/section-enabled.js') as {
   LOCATION_MAPPING_SECTION_TAG: string
 }
-settings.sectionEnabled = { ...(settings.sectionEnabled ?? {}), [LOCATION_MAPPING_SECTION_TAG]: true }
+// The real switch: `syspromptModules` — persistent maps are off for a new install.
+settings.syspromptModules = { ...(settings.syspromptModules ?? {}), [LOCATION_MAPPING_SECTION_TAG]: true }
 clearSchedulerEventLog()
 await go('chat-1')
 await wait(400)
@@ -151,6 +152,8 @@ console.log('\n── sending a message ──')
 const intent = async (): Promise<Record<string, any> | null> =>
   (await import('../src/tracker/map-intent')).lastMapIntent as Record<string, any> | null
 settings.mapUpdaterEnabled = true
+// Modules are kept per chat, and switching into this one restored its own set.
+settings.syspromptModules = { ...(settings.syspromptModules ?? {}), [LOCATION_MAPPING_SECTION_TAG]: true }
 const sent = host('chat-1', 'm5', 4, true, 'I step into the smithy.')
 state.messages.get('chat-1')!.push(sent as never)
 await emitHostEvent(state, 'MESSAGE_SENT', { chatId: 'chat-1', message: sent })

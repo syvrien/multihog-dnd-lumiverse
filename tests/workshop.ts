@@ -37,6 +37,12 @@ const { getSettings } = await import('../src/engine/state-manager.js') as {
 }
 const settings = getSettings()
 
+// Persistent maps are off for a new install; this suite is about maps.
+await emitFrontendMessage(state, {
+  type: 'settings:patch', patch: { 'syspromptModules.dungeon_reality_and_hidden_mapping': true },
+})
+await wait()
+
 console.log('── a map to look at ──')
 // Build one through the Architect, so the stored shape is the real one rather
 // than a fixture that happens to satisfy the renderer.
