@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 /**
  * memo-processor.js — Multihog D&D Framework
  * Pure text/logic utilities for memo management and state model context assembly.
@@ -1695,7 +1696,7 @@ export async function buildLorebookContext() {
                 // Final fallback: direct backend fetch
                 if (!booksToLoad.length) {
                     try {
-                        const resp = await fetch('/api/settings/get', {
+                        const resp = await stFetch('/api/settings/get', {
                             method: 'POST',
                             headers: stCtx.getRequestHeaders(),
                             body: JSON.stringify({}),

@@ -123,8 +123,10 @@ back to `false`, then repeat the two steps above.
 
 The built backend bundle is also run through an install-time safety scan
 (filesystem/subprocess/socket/SQLite imports, dangerous `Bun.*`/`process.*`
-calls, `eval`/`Function`, base64-decoding `Buffer.from`) with no opt-out for
-most of those. This bundle has been checked clean against every one of them.
+calls, `eval`/`Function`, base64-decoding `Buffer.from`, and — since late 2026 —
+any direct use of `fetch`) with no opt-out for most of those. This bundle has
+been checked clean against every one of them, and `tests/backend-scan.ts` builds
+the backend and fails if a forbidden `fetch` form comes back.
 
 ## Long campaigns: pair it with Loom
 

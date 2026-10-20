@@ -1,3 +1,4 @@
+import { stFetch } from '../../../compat/st-core.js';
 /**
  * File-backed memo/map and Map Evolution history. Live values remain available
  * to existing callers, but are non-enumerable after a successful file write so
@@ -144,7 +145,7 @@ function isOwnFile(url) {
 async function uploadJson(fileName, text) {
     const { bytes, compressed } = await compressedBytes(text);
     const name = `${fileName}.json${compressed ? '.gz' : ''}`;
-    const response = await fetch('/api/files/upload', {
+    const response = await stFetch('/api/files/upload', {
         method: 'POST', headers: headers(),
         body: JSON.stringify({ name, data: bytesToBase64(bytes) }),
     });
@@ -156,7 +157,7 @@ async function uploadJson(fileName, text) {
 
 async function readJson(url) {
     if (!isOwnFile(url)) throw new Error('Invalid history file path');
-    const response = await fetch(url, { headers: headers(), cache: 'no-store' });
+    const response = await stFetch(url, { headers: headers(), cache: 'no-store' });
     if (!response.ok) throw new Error(`History download failed (HTTP ${response.status})`);
     let bytes = new Uint8Array(await response.arrayBuffer());
     if (url.endsWith('.gz')) {
@@ -366,7 +367,7 @@ export async function removeUnreferencedHistoryFile(settings, url) {
     if (Object.values(settings?.chatStates || {}).some(part => part?.historyStorage?.url === url)) return false;
     if (Object.values(settings?.profiles || {}).some(profile => profile?.historyStorage?.url === url)) return false;
     if (settings?.globalHistoryStorage?.url === url) return false;
-    const response = await fetch('/api/files/delete', {
+    const response = await stFetch('/api/files/delete', {
         method: 'POST', headers: headers(), body: JSON.stringify({ path: url }),
     });
     if (!response.ok && response.status !== 404) throw new Error(`History deletion failed (HTTP ${response.status})`);
@@ -390,7 +391,7 @@ function referencedUrls(settings) {
  * never make its old file disappear.
  */
 export async function cleanupSupersededHistoryFiles(settings) {
-    const response = await fetch('/api/settings/get', { method: 'POST', headers: headers() });
+    const response = await stFetch('/api/settings/get', { method: 'POST', headers: headers() });
     if (!response.ok) throw new Error(`Could not verify saved settings (HTTP ${response.status})`);
     const result = await response.json();
     const disk = JSON.parse(result.settings)?.extension_settings?.[MODULE_NAME];

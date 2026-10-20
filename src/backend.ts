@@ -8,7 +8,6 @@
  */
 
 import { installCompatGlobals } from './compat/install'
-import { installFetchShim } from './compat/worldinfo-rest'
 import { flushBrowserEnv, hydrateBrowserEnv, installBrowserEnv } from './compat/browser-env'
 import { loadSettings, saveSettings, settingsLoaded } from './compat/settings-store'
 import { bridgeHostEvents, event_types, eventSource } from './compat/events'
@@ -2324,7 +2323,6 @@ async function boot(): Promise<void> {
   // `localStorage` while initialising. Contents arrive with the user.
   installBrowserEnv()
   installCompatGlobals()
-  installFetchShim()
 
   teardowns.push(bridgeHostEvents())
   teardowns.push(routeFrontendMessages())

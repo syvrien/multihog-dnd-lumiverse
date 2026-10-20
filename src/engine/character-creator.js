@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 import { getSettings, saveChatState, DEFAULT_PC_SECTIONS, getActiveChatId } from './state-manager.js';
 import { sendStateRequest } from './llm-client.js';
 import { buildOnboardingXpHint, buildOnboardingTimeHint, buildStartingGearHint, buildOnboardingActiveBlocks, buildCombatAndSkillScalingHint } from './constants.js';
@@ -892,7 +893,7 @@ function assertPersonaChatOwned(canCommit) {
 
 async function uploadDefaultPersonaAvatar(url, avatarId, refreshAvatars, canCommit) {
     assertPersonaChatOwned(canCommit);
-    const fetchResult = await fetch(url);
+    const fetchResult = await stFetch(url);
     assertPersonaChatOwned(canCommit);
     const blob = await fetchResult.blob();
     assertPersonaChatOwned(canCommit);
@@ -901,7 +902,7 @@ async function uploadDefaultPersonaAvatar(url, avatarId, refreshAvatars, canComm
     formData.append('avatar', file);
     formData.append('overwrite_name', avatarId);
 
-    const response = await fetch('/api/avatars/upload', {
+    const response = await stFetch('/api/avatars/upload', {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
         cache: 'no-cache',

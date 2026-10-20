@@ -32,6 +32,8 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 const wait = (ms = 400): Promise<unknown> => new Promise(resolve => setTimeout(resolve, ms))
 
 await import('../src/backend')
+// What the engine's fetch calls are rewritten to; see compat/worldinfo-rest.ts.
+const { stFetch } = await import('../src/compat/st-core')
 await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await wait()
 
@@ -166,7 +168,7 @@ for (let n = 0; n < 260; n++) {
 const { invalidateWorldInfoCache } = await import('../src/compat/world-info')
 invalidateWorldInfoCache()
 
-const listed = await fetch('/api/worldinfo/list', {
+const listed = await stFetch('/api/worldinfo/list', {
   method: 'POST', body: JSON.stringify({}),
 })
 const books = await listed.json() as Array<{ file_id: string }>
@@ -177,7 +179,7 @@ check('including one past the page boundary',
   'this is the one that used to vanish')
 
 // Deleting resolved the name through the same truncated call.
-const deleted = await fetch('/api/worldinfo/delete', {
+const deleted = await stFetch('/api/worldinfo/delete', {
   method: 'POST', body: JSON.stringify({ name: 'Campaign_Book_259' }),
 })
 check('and a book past the boundary can be deleted', deleted.ok,

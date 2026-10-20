@@ -9,10 +9,13 @@
  *   POPUP_RESULT               game-systems.js
  *   SlashCommandAbortController portraits.js
  *
- * The port script rewrites all four import paths to this module.
+ * The port script rewrites all four import paths to this module — and points
+ * every engine `fetch(` call at `stFetch`, re-exported here. See
+ * `worldinfo-rest.ts`.
  */
 
 export { POPUP_RESULT } from '../shared/protocol'
+export { stFetch } from './worldinfo-rest'
 
 /**
  * SillyTavern's auth headers for its own REST API.
@@ -24,8 +27,8 @@ export { POPUP_RESULT } from '../shared/protocol'
  * blocked them over a header the shim ignores. It cost the Map Architect its
  * save — the map generated and validated, then died on the write.
  *
- * The guard belongs one layer down, and is already there: `installFetchShim()`
- * rejects every SillyTavern endpoint it does not implement, **by name**, so an
+ * The guard belongs one layer down, and is already there: `stFetch()` rejects
+ * every SillyTavern endpoint it does not implement, **by name**, so an
  * unported call site still fails loudly and says which route it wanted.
  */
 export function getRequestHeaders(): Record<string, string> {

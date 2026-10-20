@@ -5,7 +5,7 @@
  *
  * `router.js` is 5,799 lines and reaches the host two ways: through
  * `getContext()` (already shimmed) and through 13 raw `fetch('/api/worldinfo/*')`
- * calls that bypass it entirely, because upstream needed to defeat
+ * calls — rewritten to `stFetch` by the port script — that bypass it entirely, because upstream needed to defeat
  * SillyTavern's stale `worldInfoCache`.
  *
  * Those are served in-process by `compat/worldinfo-rest.ts` rather than
@@ -34,6 +34,8 @@ const check = (label: string, ok: boolean, detail = ''): void => {
 }
 
 await import('../src/backend')
+// What the engine's fetch calls are rewritten to; see compat/worldinfo-rest.ts.
+const { stFetch } = await import('../src/compat/st-core')
 await emitHostEvent(state, 'CHAT_SWITCHED', { chatId: 'chat-1' })
 await new Promise(resolve => setTimeout(resolve, 400))
 
@@ -41,7 +43,7 @@ console.log('── world info REST shim ──')
 
 // `list` — the agent reads `file_id` off each row.
 await spindle.world_books.create({ name: 'Campaign Lore', description: '' }, 'user-1')
-const listResponse = await fetch('/api/worldinfo/list', { method: 'POST' })
+const listResponse = await stFetch('/api/worldinfo/list', { method: 'POST' })
 check('list responds ok', listResponse.ok, String(listResponse.status))
 const listed = await listResponse.json() as Array<{ file_id?: string }>
 check('list returns file_id rows',
@@ -51,14 +53,14 @@ check('list returns file_id rows',
 // `get` — a missing book must be a 404, not an empty document. The agent
 // treats a completed response as authoritative, so `{entries:{}}` would read as
 // "this book exists and is empty" and it would stop creating it.
-const missing = await fetch('/api/worldinfo/get', {
+const missing = await stFetch('/api/worldinfo/get', {
   method: 'POST', body: JSON.stringify({ name: 'Does Not Exist' }),
 })
 check('missing book is a 404, not an empty document', missing.status === 404,
   String(missing.status))
 
 // `edit` — write two entries through the raw endpoint.
-const edit = await fetch('/api/worldinfo/edit', {
+const edit = await stFetch('/api/worldinfo/edit', {
   method: 'POST',
   body: JSON.stringify({
     name: 'Campaign Lore',
@@ -95,7 +97,7 @@ check('translated ST disable to Lumiverse disabled',
   JSON.stringify(stored.map(e => e.disabled)))
 
 // `get` — round-trip back into ST document shape.
-const getResponse = await fetch('/api/worldinfo/get', {
+const getResponse = await stFetch('/api/worldinfo/get', {
   method: 'POST', body: JSON.stringify({ name: 'Campaign Lore' }),
 })
 check('get responds ok', getResponse.ok, String(getResponse.status))
@@ -121,7 +123,7 @@ check('headers no longer throw', typeof getRequestHeaders() === 'object',
 
 for (const route of ['/api/characters/all', '/api/settings/get', '/api/images/upload']) {
   try {
-    await fetch(route, { method: 'POST', headers: getRequestHeaders() })
+    await stFetch(route, { method: 'POST', headers: getRequestHeaders() })
     check(`${route} rejects`, false, 'it resolved')
   } catch (error) {
     check(`${route} rejects by name`,

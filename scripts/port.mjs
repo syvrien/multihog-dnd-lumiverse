@@ -200,6 +200,21 @@ while (queue.length) {
     return whole
   })
 
+  // Newer Lumiverse refuses to install a backend that calls `fetch` directly,
+  // with no opt-in. Every engine call goes to `stFetch` instead, which serves
+  // what the port can answer in-process and fails by name on the rest. See
+  // `src/compat/worldinfo-rest.ts`. `tests/backend-scan.ts` fails if a bare
+  // call survives.
+  let fetchCalls = 0
+  out = out.replace(/(?<![.\w$])fetch(\s*(?:\?\.\s*)?\()/g, (_whole, call) => {
+    fetchCalls++
+    return `stFetch${call}`
+  })
+  if (fetchCalls) {
+    out = `import { stFetch } from '${upToEngineRoot}../compat/st-core.js';\n${out}`
+    rewritten.push(`${rel}: ${fetchCalls} fetch() -> stFetch()`)
+  }
+
   for (const { local, exportAs } of LIFTED_CONSTS[rel] ?? []) {
     // The literal runs to the closing backtick that is not escaped.
     const match = new RegExp(`\\bconst\\s+${local}\\s*=\\s*\`((?:[^\`\\\\]|\\\\.)*)\``, 's').exec(out)

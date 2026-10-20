@@ -1853,7 +1853,7 @@ configuration from an extension would be the wrong call.
 ## Where the port stands
 
 **Engine regenerated from upstream 2026.9.25 (`d6aab00`)** — 114 files from
-`scripts/port.mjs` — across 43 test suites and 1,180 checks. (Against the earlier
+`scripts/port.mjs` — across 44 test suites and 1,195 checks. (Against the earlier
 `de2d97b` base the count was 107 of 133 upstream files, 55,387 lines; that
 figure has not been re-measured for the new base.)
 
@@ -2404,3 +2404,36 @@ An extension cannot change what Loom reads or how Loom and the Message Limit
 are configured. The README gives the recommended setup, and a Loom
 prompt-override line that keeps CYOA menus and hidden map blocks out of the
 summary.
+
+### "Uses blocked backend capabilities: direct fetch API usage"
+
+Newer Lumiverse (October 2026) refuses to install a backend that uses `fetch`
+directly, with no opt-in. That covers a bare `fetch(` call, `fetch` aliased or
+`.call`ed, `globalThis.fetch` / `self.fetch`, and fetch library imports. The
+port failed the scan on two counts:
+
+- **47 `fetch(` calls in the engine:** SillyTavern REST endpoints, AI Horde,
+  Pollinations, direct OpenAI/Ollama, the manual.
+- **`installFetchShim()`,** which replaced `globalThis.fetch` at startup to
+  serve `/api/worldinfo/*` in-process and passed everything else to the real
+  `fetch`. The newer runtime replaces the global itself besides.
+
+`scripts/port.mjs` now rewrites every engine `fetch(` to `stFetch(`, imported
+from `compat/st-core.js`, and the global shim is gone. `stFetch`, in
+`worldinfo-rest.ts`, behaves as follows:
+
+- It answers the world-info endpoints in-process and serves the bundled manual,
+  as the shim did.
+- It still rejects other SillyTavern endpoints by name.
+- It now also rejects **every other URL**, saying why. The shim let those
+  through to the network, but each one has a Lumiverse replacement the port
+  already uses, and none is reachable from the port's settings: the image paths
+  go through host image generation, and connections are always Lumiverse
+  connections.
+
+The port was regenerated from the same upstream commit (`d6aab00`). The engine
+diff is exactly the 47 rewritten calls plus 9 import lines. The bundle was
+checked against Lumiverse's own scanner (`detectDangerousBackendCapabilities`
+at upstream `3ca135a2`): nothing blocked. `tests/backend-scan.ts` builds the
+backend the way the installer does, fails on any forbidden form, and checks
+`stFetch` still does the shim's job.

@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 import { getSettings, getActiveChatId, getEffectiveRouterCampaignPrefix, persistWorldProgressionTimer, persistRouterLastRunWatermark, persistRouterLastRunTimestamp, persistMapEvolutionState, getNpcRelationshipMax, clampRelationshipValue, buildRouterRelationshipInstruction, sanitizeRouterState, adjustPromptTimestamps, DEFAULT_NPC_SECTIONS, saveChatState, computeUnpinnedActiveCount, extractCharacterBlock, extractPartyBlock, isPcCoreTarget, isAppearanceField, isEquipmentField, isCombatProfileField, getEligibleCoreFieldNames, patchLabeledSection, mergePreservedColorMarkup, expandLorebookPromptTemplate, resolveRecordCategoryTag, getEnabledRouterCategoryTags, getRouterCategoryBookSuffix, buildRouterCategoryMap } from './state-manager.js';
 import { sendStateRequest, sendAgentTurn } from './llm-client.js';
 import { canCommitPassForChat, createChatCommitGuard, assertChatCommit, chatCommitResult } from './src/state/pass-affinity.js';
@@ -347,7 +348,7 @@ async function getWorldInfoNamesSafe(options = {}) {
     const backendNames = new Set();
     let backendResponded = false;
     try {
-        const r = await fetch('/api/worldinfo/list', { method: 'POST', headers: getRequestHeaders() });
+        const r = await stFetch('/api/worldinfo/list', { method: 'POST', headers: getRequestHeaders() });
         if (r.ok) {
             const j = await r.json();
             if (Array.isArray(j)) {
@@ -445,7 +446,7 @@ function buildRouterLoreState(settings, { prefix, chatId, bookSnapshots }) {
 /** Loads current disk data, bypassing SillyTavern's worldInfoCache. */
 async function loadWorldInfoFresh(bookName, ctx = SillyTavern.getContext()) {
     try {
-        const response = await fetch('/api/worldinfo/get', {
+        const response = await stFetch('/api/worldinfo/get', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({ name: bookName }),
@@ -486,7 +487,7 @@ export async function updateWorldInfoCache(bookName, bookData) {
 }
 
 async function deleteWorldInfoFresh(bookName) {
-    const response = await fetch('/api/worldinfo/delete', {
+    const response = await stFetch('/api/worldinfo/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: bookName }),
@@ -499,7 +500,7 @@ async function deleteWorldInfoFresh(bookName) {
 
 async function saveWorldInfoSnapshot(bookName, bookData, ctx, operationLabel, canCommit = createChatCommitGuard(getActiveChatId(), getActiveChatId)) {
     assertChatCommit(canCommit);
-    const response = chatCommitResult(canCommit, await fetch('/api/worldinfo/edit', {
+    const response = chatCommitResult(canCommit, await stFetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: bookName, data: bookData }),
@@ -3167,7 +3168,7 @@ async function applyAction(action, allBooks = {}, currentTime = '', breadcrumb =
 
         if (!bookData) {
             try {
-                const res = await fetch('/api/worldinfo/get', {
+                const res = await stFetch('/api/worldinfo/get', {
                     method: 'POST',
                     headers: getRequestHeaders(),
                     body: JSON.stringify({ name: targetBook })
@@ -3296,7 +3297,7 @@ async function applyAction(action, allBooks = {}, currentTime = '', breadcrumb =
         // ctx.saveWorldInfo only flushes books already in ST's in-memory registry,
         // silently dropping any new (unregistered) books. The /api/worldinfo/edit
         // endpoint writes directly to disk with no registry requirement.
-        const saveRes = await fetch('/api/worldinfo/edit', {
+        const saveRes = await stFetch('/api/worldinfo/edit', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({ name: targetBook, data: bookData })
@@ -3997,7 +3998,7 @@ async function addLorebookEntry(lorebookName, entryData, allNames, canCommit = c
     
     if (!bookData) {
         try {
-            const res = chatCommitResult(canCommit, await fetch('/api/worldinfo/get', {
+            const res = chatCommitResult(canCommit, await stFetch('/api/worldinfo/get', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 body: JSON.stringify({ name: lorebookName })
@@ -4932,7 +4933,7 @@ async function clearWorldInfoBookEntries(bookName) {
         extensions: book?.extensions ?? {},
     };
 
-    chatCommitResult(ownsChat, await fetch('/api/worldinfo/edit', {
+    chatCommitResult(ownsChat, await stFetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: bookName, data: emptyBook }),
@@ -5245,7 +5246,7 @@ ${rawDump}`;
                     }
 
                     // Persist to disk
-                    await fetch('/api/worldinfo/edit', {
+                    await stFetch('/api/worldinfo/edit', {
                         method: 'POST',
                         headers: getRequestHeaders(),
                         body: JSON.stringify({ name: worldBookName, data: freshBook })
@@ -5412,7 +5413,7 @@ ${historicalDump}`;
     if (!ownsChat()) return abortForChatChange();
     if (!freshWorldBook?.entries) {
         try {
-            const r = await fetch('/api/worldinfo/get', {
+            const r = await stFetch('/api/worldinfo/get', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 body: JSON.stringify({ name: worldBookName })
@@ -5441,7 +5442,7 @@ ${historicalDump}`;
                 },
             };
             try {
-                const response = await fetch('/api/worldinfo/edit', {
+                const response = await stFetch('/api/worldinfo/edit', {
                     method: 'POST',
                     headers: getRequestHeaders(),
                     body: JSON.stringify({ name: worldBookName, data: freshWorldBook }),
@@ -5769,7 +5770,7 @@ Only output factions, locations, and conflicts explicitly mentioned in the suppl
         uid++;
     }
 
-    const saveRes = chatCommitResult(ownsChat, await fetch('/api/worldinfo/edit', {
+    const saveRes = chatCommitResult(ownsChat, await stFetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: skeletonBookName, data: skeletonBook })
@@ -5964,7 +5965,7 @@ ${rawDump}`;
         settings.activeWorldKeys = (settings.activeWorldKeys || []).filter(k => k !== fullId);
     }
 
-    chatCommitResult(ownsChat, await fetch('/api/worldinfo/edit', {
+    chatCommitResult(ownsChat, await stFetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: worldBookName, data: freshBook })

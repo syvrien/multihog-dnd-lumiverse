@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 import { getRequestHeaders } from './../compat/st-core.js';
 import { getActiveChatId } from './state-manager.js';
 import { decodeHtml } from './memo-processor.js';
@@ -122,7 +123,7 @@ export async function uploadPortraitDataUrl(dataUrl, chatId, entityName, dedupeC
         ? `${chatSegment}__${entitySegment}__${Date.now()}`
         : `${chatSegment}__${entitySegment}`;
 
-    const response = await fetch('/api/images/upload', {
+    const response = await stFetch('/api/images/upload', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
@@ -163,7 +164,7 @@ export async function persistPortraitSrc(src, chatId, entityName, unique = true)
 export async function deletePortraitFile(path) {
     if (!isManagedPortraitPath(path)) return;
     try {
-        const response = await fetch('/api/images/delete', {
+        const response = await stFetch('/api/images/delete', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({ path }),

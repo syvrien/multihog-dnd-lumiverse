@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 /**
  * adventure-companion.js — Multihog D&D Framework in-panel CHAT.
  * One Adventure Companion, with optional Tutorial Mode documentation injection.
@@ -744,7 +745,7 @@ async function loadDocumentation() {
     if (_docPromise) return _docPromise;
     _docPromise = (async () => {
         try {
-            const res = await fetch(DOC_URL, { cache: 'no-cache' });
+            const res = await stFetch(DOC_URL, { cache: 'no-cache' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             _docCache = await res.text();
         } catch (err) {

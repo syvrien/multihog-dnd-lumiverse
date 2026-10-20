@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 import { getSettings, getActiveChatId, getEffectiveRouterCampaignPrefix } from './state-manager.js';
 import { saveSettings } from './src/app/runtime-bridge.js';
 import { sendStateRequest } from './llm-client.js';
@@ -442,7 +443,7 @@ export async function fetchHordeModels() {
     if (_hordeModelsCache && (Date.now() - _hordeModelsCacheAt) < 5 * 60 * 1000) {
         return _hordeModelsCache;
     }
-    const resp = await fetch(`${HORDE_API_BASE}/status/models?type=image`, {
+    const resp = await stFetch(`${HORDE_API_BASE}/status/models?type=image`, {
         headers: { 'Client-Agent': HORDE_CLIENT_AGENT },
     });
     if (!resp.ok) throw new Error(`AI Horde model list ${resp.status}`);
@@ -489,7 +490,7 @@ export async function generateWithHordeAsync(prompt, opts = {}) {
 
     console.log('[RPG Tracker] AI Horde: submitting generation request', { params, models: payload.models || '(any)' });
 
-    const submitResp = await fetch(`${HORDE_API_BASE}/generate/async`, {
+    const submitResp = await stFetch(`${HORDE_API_BASE}/generate/async`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -528,7 +529,7 @@ export async function generateWithHordeAsync(prompt, opts = {}) {
         throwIfAborted();
         waitMs = Math.min(waitMs + 1000, 8000);
 
-        const checkResp = await fetch(`${HORDE_API_BASE}/generate/check/${requestId}`, {
+        const checkResp = await stFetch(`${HORDE_API_BASE}/generate/check/${requestId}`, {
             headers: { 'Client-Agent': HORDE_CLIENT_AGENT },
             signal: externalSignal,
         });
@@ -551,7 +552,7 @@ export async function generateWithHordeAsync(prompt, opts = {}) {
         }
     }
 
-    const statusResp = await fetch(`${HORDE_API_BASE}/generate/status/${requestId}`, {
+    const statusResp = await stFetch(`${HORDE_API_BASE}/generate/status/${requestId}`, {
         headers: { 'Client-Agent': HORDE_CLIENT_AGENT },
         signal: externalSignal,
     });
@@ -583,7 +584,7 @@ async function hordeImageToDataUrl(img, signal) {
     const value = String(img || '').trim();
     if (!value) throw new Error('AI Horde returned an empty image payload');
     if (/^https?:\/\//i.test(value)) {
-        const imgResp = await fetch(value, { signal });
+        const imgResp = await stFetch(value, { signal });
         if (!imgResp.ok) throw new Error(`Failed to download generated image (${imgResp.status})`);
         const blob = await imgResp.blob();
         return await new Promise((resolve, reject) => {
@@ -971,7 +972,7 @@ export async function generatePortraitDirect(prompt, entityName, opts = {}) {
             
             let resp;
             try {
-                resp = await fetch(url, { signal: controller.signal });
+                resp = await stFetch(url, { signal: controller.signal });
                 clearTimeout(timeoutId);
             } catch (err) {
                 clearTimeout(timeoutId);

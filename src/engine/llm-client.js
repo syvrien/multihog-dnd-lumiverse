@@ -1,3 +1,4 @@
+import { stFetch } from './../compat/st-core.js';
 /**
  * llm-client.js — Multihog D&D Framework
  * All external LLM networking. Stateless — reads state via parameter, no DOM.
@@ -515,7 +516,7 @@ export async function sendViaOllama(url, model, systemPrompt, userPrompt, maxTok
     try {
         const proxyHeaders = getProxyHeaders();
         const finalHeaders = { ...headers, ...proxyHeaders };
-        response = await fetch(proxiedUrl(targetUrl), {
+        response = await stFetch(proxiedUrl(targetUrl), {
             method: 'POST',
             headers: finalHeaders,
             body: JSON.stringify(requestBody),
@@ -526,7 +527,7 @@ export async function sendViaOllama(url, model, systemPrompt, userPrompt, maxTok
         }
     } catch (proxyError) {
         try {
-            response = await fetch(targetUrl, {
+            response = await stFetch(targetUrl, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(requestBody),
@@ -583,12 +584,12 @@ export async function fetchOllamaModels(url) {
     let response;
     try {
         const proxyHeaders = getProxyHeaders();
-        response = await fetch(proxiedUrl(targetUrl), { method: 'GET', headers: proxyHeaders });
+        response = await stFetch(proxiedUrl(targetUrl), { method: 'GET', headers: proxyHeaders });
         if (!response.ok && response.status === 404) {
-            response = await fetch(targetUrl, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+            response = await stFetch(targetUrl, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
         }
     } catch (e) {
-        response = await fetch(targetUrl, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+        response = await stFetch(targetUrl, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
     }
     if (!response.ok) {
         if (response.status === 401) throw new Error('Ollama returned 401 Unauthorized. Check that no authentication is required.');
@@ -647,15 +648,15 @@ export async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt
         try {
             const proxyHeaders = getProxyHeaders();
             const finalHeaders = { ...headers, ...proxyHeaders };
-            response = await fetch(proxiedUrl(endpoint), { method: 'POST', headers: finalHeaders, body: JSON.stringify(requestBody), signal });
+            response = await stFetch(proxiedUrl(endpoint), { method: 'POST', headers: finalHeaders, body: JSON.stringify(requestBody), signal });
             if (!response.ok && response.status === 404) {
                 throw new Error('Proxy 404');
             }
         } catch (e) {
-            response = await fetch(endpoint, { method: 'POST', headers: headers, body: JSON.stringify(requestBody), credentials: 'omit', signal });
+            response = await stFetch(endpoint, { method: 'POST', headers: headers, body: JSON.stringify(requestBody), credentials: 'omit', signal });
         }
     } else {
-        response = await fetch(endpoint, { method: 'POST', headers: headers, body: JSON.stringify(requestBody), credentials: 'omit', signal });
+        response = await stFetch(endpoint, { method: 'POST', headers: headers, body: JSON.stringify(requestBody), credentials: 'omit', signal });
     }
 
     if (!response.ok) {
@@ -711,7 +712,7 @@ export async function fetchOpenAIModels(url, apiKey) {
         try {
             const proxyHeaders = getProxyHeaders();
             const finalHeaders = { ...headers, ...proxyHeaders };
-            const proxyResponse = await fetch(proxiedUrl(endpoint), { method: 'GET', headers: finalHeaders });
+            const proxyResponse = await stFetch(proxiedUrl(endpoint), { method: 'GET', headers: finalHeaders });
             if (proxyResponse.ok) {
                 const data = await proxyResponse.json();
                 return data.data || data.models || [];
@@ -720,7 +721,7 @@ export async function fetchOpenAIModels(url, apiKey) {
     }
 
     try {
-        const directResponse = await fetch(endpoint, {
+        const directResponse = await stFetch(endpoint, {
             method: 'GET',
             headers: headers,
             credentials: 'omit',
@@ -1075,10 +1076,10 @@ export async function sendAgentTurn(settings, messages, tools = null, signal = n
         // Browser-direct fetches to remote endpoints (e.g. opencode.ai) fail CORS preflight.
         let resp;
         try {
-            resp = await fetch(proxiedUrl(endpoint), { method: 'POST', headers: { ...headers, ...getProxyHeaders() }, body: JSON.stringify(body), signal });
+            resp = await stFetch(proxiedUrl(endpoint), { method: 'POST', headers: { ...headers, ...getProxyHeaders() }, body: JSON.stringify(body), signal });
             if (!resp.ok && resp.status === 404) throw new Error('proxy 404');
         } catch (_) {
-            resp = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', signal });
+            resp = await stFetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', signal });
         }
         if (!resp.ok) {
             let _body = '';
@@ -1121,10 +1122,10 @@ export async function sendAgentTurn(settings, messages, tools = null, signal = n
 
         let resp;
         try {
-            resp = await fetch(proxiedUrl(targetUrl), { method: 'POST', headers: { ...{ 'Content-Type': 'application/json' }, ...getProxyHeaders() }, body: JSON.stringify(body), signal });
+            resp = await stFetch(proxiedUrl(targetUrl), { method: 'POST', headers: { ...{ 'Content-Type': 'application/json' }, ...getProxyHeaders() }, body: JSON.stringify(body), signal });
             if (!resp.ok && resp.status === 404) throw new Error('proxy 404');
         } catch (_) {
-            resp = await fetch(targetUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+            resp = await stFetch(targetUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
         }
         if (!resp.ok) throw new Error(`Ollama request failed (${resp.status})`);
         const data = await resp.json();

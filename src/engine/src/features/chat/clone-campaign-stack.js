@@ -1,3 +1,4 @@
+import { stFetch } from '../../../../compat/st-core.js';
 import { getRequestHeaders } from '../../../../compat/st-core.js';
 import {
     bookBelongsToPrefix,
@@ -39,7 +40,7 @@ async function listWorldNames(ctx) {
 
     // Backend ground truth — same defense as router getWorldInfoNamesSafe.
     try {
-        const r = await fetch('/api/settings/get', {
+        const r = await stFetch('/api/settings/get', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({}),
@@ -53,7 +54,7 @@ async function listWorldNames(ctx) {
     } catch (_) { /* non-fatal */ }
 
     try {
-        const r = await fetch('/api/worldinfo/list', {
+        const r = await stFetch('/api/worldinfo/list', {
             method: 'POST',
             headers: getRequestHeaders(),
         });
@@ -77,7 +78,7 @@ async function listWorldNames(ctx) {
 export async function deleteWorldInfoBooks(ctx, bookNames) {
     for (const name of bookNames || []) {
         try {
-            await fetch('/api/worldinfo/delete', {
+            await stFetch('/api/worldinfo/delete', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 body: JSON.stringify({ name }),
@@ -182,7 +183,7 @@ export async function cloneCampaignStackToPrefix(currentPrefix, newPrefix) {
         cloneData.name = newBookName;
 
         try {
-            const res = await fetch('/api/worldinfo/edit', {
+            const res = await stFetch('/api/worldinfo/edit', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 body: JSON.stringify({ name: newBookName, data: cloneData }),
